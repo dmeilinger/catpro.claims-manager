@@ -6,89 +6,90 @@ Build an agent that reads incoming claim emails and automatically creates claims
 ## System Overview
 
 - **FileTrac CMS**: https://cms14.filetrac.net (legacy ASP system, hosted by Evolution Global)
-- **Auth portal**: https://ftevolve.com/auth/login (redirects to FTEvolve, then back to FileTrac)
+- **Auth portal**: https://ftevolve.com (AWS Cognito + SSO bridge)
 - **Company**: CatPro Insurance Services, LLC
+
+## Python
+
+Always use **`python3.13`** — system `python3` is 3.9, `pip3` targets 3.13.
 
 ## Authentication
 
-Three-step login flow — fully automatable via HTTP (no browser required at runtime):
+Fully implemented in `process_claim.py`. Three-step flow:
 
-1. **POST credentials** to ftevolve.com login endpoint → receive session cookie
-2. **Generate TOTP** from secret (using `pyotp`) → POST to MFA endpoint
-3. **Session cookie** is then valid for cms14.filetrac.net requests
+1. **AWS Cognito SRP** — `pycognito` handles SRP handshake + SOFTWARE_TOKEN_MFA challenge
+2. **TOTP** — generated via `pyotp` from `FILETRAC_TOTP_SECRET`; window-boundary guard (waits if <5s remaining)
+3. **evolveLogin SSO** — `POST https://cms14.filetrac.net/system/evolveLogin.asp` with `userId`, `evolveUserId` (Cognito sub), `access_token` → sets `ASPSESSIONID*` cookie
 
-Credentials and TOTP secret are stored in `.env`:
+Cognito pool: `us-east-1_BOlb3igmv`, client ID: `1frtspmi2af7o8hqtfsfebrc6`
+FileTrac legacy user ID (CatPro): `305873`
+
+Credentials in `.env`:
 ```
 FILETRAC_EMAIL=...
 FILETRAC_PASSWORD=...
 FILETRAC_TOTP_SECRET=...
 ```
 
-TOTP venv: `/tmp/totp-env` (has `pyotp` installed)
+**TOTP reuse**: running two logins within the same 30s window causes `ExpiredCodeException`. Don't run back-to-back logins manually.
 
-## Claim Creation
+## Claim Creation — WORKING
 
-- **URL**: `https://cms14.filetrac.net/system/claimAdd.asp`
-- **Method**: `POST application/x-www-form-urlencoded`
-- **CSRF**: Each page load generates a fresh `pageLayout_CSRtoken` (GUID) that must be included in the POST
-- **Auto-save**: The form auto-saves every minute and on field blur — be careful in browser exploration
+### Key URLs
+- **Form page** (GET for CSRF token): `https://cms14.filetrac.net/system/claimAdd.asp`
+- **Submit target**: `https://cms14.filetrac.net/system/claimSave.asp?newFlag=1&anotherFlag=0`
+- **Autocomplete XHR**: `https://cms14.filetrac.net/system/claimEdit_clientList.asp`
 
-### HTTP automation flow
-1. Login → get session cookie
-2. GET `claimAdd.asp` → extract `pageLayout_CSRtoken`
-3. POST claim data + token + all required hidden fields
+### Flow
+1. `login(session)` — Cognito + evolveLogin → ASPSESSIONID cookie
+2. `GET claimAdd.asp` → extract `pageLayout_CSRtoken`
+3. Resolve dynamic IDs via `claimEdit_clientList.asp`:
+   - `?mode=customerCompanies&tgtCompany=<name>` → `companyID` (XML `<rs id='NNN'>`)
+   - `?mode=customerReps&companyID=<id>` → `companyUserID` (first contact after header entry) + `companyEMail` (from header)
+   - `?mode=customerBranches&companyID=<id>` → `ABID` (first `NNN##Branch Name`)
+4. `POST claimSave.asp?newFlag=1&anotherFlag=0` with full ~80-field payload
+5. Success: response body contains `<!-- claimID = [NNNNNNN] -->`
 
-### Key form fields extracted from email
+### ACmgrID
+The `ACmgrID` select on `claimAdd.asp` has real manager options. `_parse_select_first_value()` skips placeholders (`-1`, `0`, `302465`, "Select", "UNASSIGNED", `---`). For CatPro, expected value is `319972` (Doug Hubby's manager ID).
 
-| Field | Form Name | Notes |
-|-------|-----------|-------|
-| Storm | `stormID` | dropdown |
-| Client Company | `companyIDTxt` | autocomplete text |
-| Client Contact | `companyUserID` | dropdown |
-| Client Claim # | `companyFileID` | text |
-| Date Received | `claimDateReceived` | date |
-| Insured First Name | `insuredFName` | |
-| Insured Last Name | `insuredLName` | |
-| Insured Email | `insuredEMail` | |
-| Insured Phone | `insuredPhone` | |
-| Insured Address | `insuredAddr1`, `insuredAddr2`, `insuredCity`, `insuredState`, `insuredZIP` | |
-| Policy # | `insuredPolicyNum` | |
-| Policy Type | `PolicyType` | dropdown |
-| Policy Effective Date | `insuredPolicyStart` | |
-| Policy Expiration Date | `insuredPolicyEnd` | |
-| Date of Loss | `lossDate` | |
-| Type of Loss | `lossType` | Hail, Wind, Fire, Flood, etc. |
-| Loss Location Address | `lossAddr1`, `lossAddr2`, `lossCity`, `lossState`, `lossZIP`, `lossCounty` | |
-| Loss Description | textarea | |
-| Type of Adjustment | `claimAdjType` | dropdown (e.g. Limited) |
-| CAT Code | `claimCAT_select` | dropdown |
-| Assign Adjuster | `ACuserID` | dropdown — large list |
-| Assign Manager | `ACmgrID` | dropdown |
-| Fee Schedule | `claimScheduleID` | dropdown |
-| Special Instructions | textarea | |
-| Deductible | `claimDeductable` | |
-| Wind Deductible | `claimWindDeductable` | |
-| Coverage A–D | `claimCoverageA`–`D` + type dropdowns | |
+### Adjuster lookup
+`adjusters.json` maps `"Last, First"` → FileTrac user ID. Fallback: `302465` (UNASSIGNED).
 
-### Required hidden fields (must be included in POST)
-- `pageLayout_CSRtoken` — fresh GUID from page load
-- `ashish` = `1`
-- `ACuserID_inputType` = `SELECT`
-- `prefixID` = `##AUTO`
-- `tennessee` = `0`
-- `ackALERT` = `0`
-- `workQID` = `0`
-- Various `claimTime*` fields (default to current time)
+## PDF Parsing (Acuity Insurance only)
 
-## Browser Automation
+`pdfplumber` extracts text; deterministic regex handles Acuity's two-column layout where right-column text gets injected into left-column lines. Handles:
+- **Claim Summary**: insured name/address, policy #, loss date/location, agency block
+- **Loss Notice**: loss description, loss address, date of loss
+- **Policy Summary**: policy effective/expiration dates
 
-Used for exploration only (not production automation):
+LLM extraction not used — add later for other insurers.
+
+## Entry Point
+
+```bash
+python3.13 process_claim.py Fw_TG4832.eml
+```
+
+Or programmatically:
+```python
+from process_claim import parse_eml, extract_claim_fields, build_session, login, submit_claim
+body, pdfs = parse_eml('email.eml')
+claim = extract_claim_fields(body, pdfs)
+session = build_session()
+login(session)
+result = submit_claim(session, claim)  # returns "claimID=NNNNNNN"
+```
+
+## Next Phase: MS O365 Integration
+
+Replace file-based EML input with Microsoft 365 email trigger:
+- Watch a shared mailbox (e.g. claims@catpro.us.com) via MS Graph API / webhooks
+- On new email with PDF attachments → pipe through `process_claim.py` pipeline
+- Relevant M365 MCP tools available: `mcp__claude_ai_Microsoft_365__*`
+
+## Browser Automation (exploration only)
+
 - MCP server: `mcp__chrome-devtools__*` (configured globally in `~/.claude/settings.json`)
 - Launches headless Chromium — no extension needed
 - If stale process: `pkill -f "chrome-devtools-mcp"; pkill -f "chrome-profile"`
-
-## Next Steps
-1. Intercept actual login POST requests to map exact auth endpoints
-2. Build Python HTTP client: login → get session → submit claim
-3. Build email parser: extract claim fields from inbound email
-4. Wire together as a Claude agent tool
