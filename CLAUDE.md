@@ -1,5 +1,10 @@
 # FileTrac Claim Automation
 
+## Reference Documents
+
+- [Product Requirements](docs/product-requirements.md) — business context, goals, scope, and success criteria
+- [Architecture](docs/architecture.md) — technical design, data flow, key constants, and implementation notes
+
 ## Project Goal
 Build an agent that reads incoming claim emails and automatically creates claims in FileTrac (cms14.filetrac.net) — no manual data entry.
 
