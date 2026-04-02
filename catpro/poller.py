@@ -38,8 +38,8 @@ class Poller:
             login(self._session)
             log.info("Authenticated to FileTrac")
 
-    def _process_message(self, msg: EmailMessage) -> str:
-        """Process a single email through the claim pipeline. Returns claim ID."""
+    def _process_message(self, msg: EmailMessage):
+        """Process a single email through the claim pipeline. Returns SubmitResult."""
         claim = extract_claim_fields(msg.body_text, msg.pdfs)
         self._ensure_session()
         try:
@@ -75,14 +75,24 @@ class Poller:
             log.info("Processing: %s (row %d)", msg.subject, row_id)
 
             try:
-                claim_id = self._process_message(msg)
-                self._db.mark_success(row_id, claim_id)
-                self._source.mark_read(msg.message_id)
-                log.info("Success: %s -> %s", msg.subject, claim_id)
+                result = self._process_message(msg)
+                self._db.mark_success(row_id, result.claim_id)
+                self._db.insert_claim_data(
+                    email_id=row_id,
+                    claim_fields=result.claim_fields,
+                    resolved_ids=result.resolved_ids,
+                    submission_payload=result.payload,
+                )
+                log.info("Success: %s -> %s", msg.subject, result.claim_id)
             except Exception as e:
                 self._db.mark_error(row_id, str(e))
                 log.error("Failed: %s -> %s", msg.subject, e, exc_info=True)
-                # Do NOT mark as read — leave for manual review
+                continue  # Do NOT mark as read — leave for manual review
+
+            try:
+                self._source.mark_read(msg.message_id)
+            except Exception as e:
+                log.warning("Could not mark as read: %s -> %s", msg.subject, e)
 
     def run(self) -> None:
         """Main polling loop with graceful shutdown on SIGTERM/SIGINT."""

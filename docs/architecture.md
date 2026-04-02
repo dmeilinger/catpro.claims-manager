@@ -162,7 +162,7 @@ claims.db
 
 `EmailSource` is a `typing.Protocol` with two methods:
 - `fetch_unread() -> list[EmailMessage]` — return unread messages with PDFs
-- `mark_read(message_id: str) -> None` — mark as read in the source system
+- `mark_read(message_id: str) -> None` — mark as read and move to "Processed" folder
 
 Implementations:
 | Class | Use case |
@@ -178,30 +178,51 @@ CatPro is a separate M365 tenant. Uses `msal.ConfidentialClientApplication` with
 
 **Azure AD prerequisites** (manual setup in CatPro tenant):
 1. Register application → tenant ID + client ID
-2. Add API permissions: `Mail.Read`, `Mail.ReadWrite` (Application type)
-3. Grant admin consent
+2. Add API permissions: `Mail.Read`, `Mail.ReadWrite`, `Mail.Send` (Application type)
+3. Grant admin consent (via `az rest` app role assignments)
 4. Create client secret → store in `.env`
 5. (Recommended) Application access policy to restrict to shared mailbox only
 
 ### SQLite Tracking (`db.py`)
 
+Two tables: `processed_emails` tracks email processing status, `claim_data` captures all extracted fields and the submission payload.
+
 ```sql
 CREATE TABLE processed_emails (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    message_id          TEXT NOT NULL,      -- Graph API message ID
+    message_id          TEXT NOT NULL,      -- Graph API message ID (for API calls)
     internet_message_id TEXT NOT NULL,      -- RFC 2822 Message-ID (dedup key)
     subject             TEXT,
     sender              TEXT,
     received_at         TEXT,
     processed_at        TEXT NOT NULL,
-    claim_id            TEXT,              -- FileTrac claim ID (e.g. "claimID=1234567")
+    claim_id            TEXT,              -- FileTrac claim ID (e.g. "claimID=1234567") or "DRY_RUN"
     status              TEXT NOT NULL,     -- pending | success | error
     error_message       TEXT,
     UNIQUE(internet_message_id)
 );
+
+CREATE TABLE claim_data (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    email_id                INTEGER NOT NULL REFERENCES processed_emails(id),
+    -- All extracted fields from PDF/email parsing (mirrors ClaimData model)
+    insured_first_name      TEXT,
+    insured_last_name       TEXT,
+    ...                     -- 30 fields total (insured, loss, client, agent, policy)
+    -- Resolved FileTrac IDs
+    filetrac_company_id     TEXT,
+    filetrac_contact_id     TEXT,
+    filetrac_branch_id      TEXT,
+    filetrac_adjuster_id    TEXT,
+    filetrac_manager_id     TEXT,
+    filetrac_csrf_token     TEXT,
+    -- Full submission payload as JSON (~80 form fields)
+    submission_payload      TEXT,
+    created_at              TEXT NOT NULL
+);
 ```
 
-Crash-safe: row inserted as `pending` before processing. Updated to `success`/`error` after.
+Crash-safe: `processed_emails` row inserted as `pending` before processing, updated to `success`/`error` after. `claim_data` row inserted on success with all extracted fields and the exact payload that would be (or was) POSTed to FileTrac.
 
 ### Configuration (`config.py`)
 
@@ -212,11 +233,14 @@ Pydantic `Settings` class loads all config from `.env`:
 AZURE_TENANT_ID=<guid>
 AZURE_CLIENT_ID=<guid>
 AZURE_CLIENT_SECRET=<secret>
-M365_MAILBOX=claims@catpro.us.com
+M365_MAILBOX=claims-test@catpro.us.com
 
 # Polling
 POLL_INTERVAL_SECONDS=60
-DB_PATH=claims.db
+DB_PATH=data/claims.db
+
+# Dry run — skips billable POST, saves everything else to DB
+DRY_RUN=true
 ```
 
 ### Entry Points
@@ -228,12 +252,29 @@ python3.13 -m catpro.process_claim email.eml  # process single EML file
 
 Handles SIGTERM/SIGINT for clean Docker shutdown (1-second interruptible sleep).
 
+### Post-Processing
+
+- **Success**: email marked read and moved to **"Processed"** folder (auto-created)
+- **Failure**: email left unread in inbox for manual review; error recorded in DB
+
 ### Error Handling
 
-- **Failed emails**: marked `error` in DB, left unread in mailbox for manual review
 - **Session expiry**: re-authenticates to FileTrac with one retry
 - **Graph API token refresh**: automatic on 401
 - **TOTP safety**: single FileTrac session reused across all messages in a poll cycle
+- **mark_read failure**: logged as warning, does not affect claim success status
+
+### DRY_RUN Mode
+
+`DRY_RUN=true` runs the full pipeline (poll, parse, extract, authenticate, resolve IDs, build payload) but skips the final `POST claimSave.asp`. No billable claim is created in FileTrac. All data is still saved to `claim_data` — useful for validating the entire pipeline without cost.
+
+### Test Email Generator (`test_email.py`)
+
+Sends real emails to the test mailbox via Graph API `sendMail` (from the FileTrac user account). Uses mock Acuity PDFs from `data/templates/sample_acuity_claim.eml` — all fictional data, no real PII.
+
+```bash
+python3.13 -m catpro.test_email --ref 0001 --adjuster "Doug"
+```
 
 ## Phase 3: FastAPI Deployment (Planned)
 
@@ -260,12 +301,15 @@ catpro/                     — Main Python package
   __init__.py
   process_claim.py          — Core pipeline: parse, extract, auth, submit (Phase 1)
   email_source.py           — Email source abstraction: Protocol + EML + Graph API
-  db.py                     — SQLite tracking: processed emails ↔ claim IDs
+  db.py                     — SQLite tracking: processed_emails + claim_data tables
   config.py                 — Pydantic settings from .env
   poller.py                 — Polling loop + orchestration (Phase 2 entry point)
+  test_email.py             — Inject test emails into M365 mailbox
   adjusters.json            — Adjuster name → FileTrac ID mapping
 data/                       — Runtime data (gitignored except .gitkeep)
   claims.db                 — SQLite database (created at runtime)
+  templates/
+    sample_acuity_claim.eml — Mock Acuity claim with fake data (for testing)
 requirements.txt            — Python dependencies
 .env                        — Credentials (gitignored)
 docs/

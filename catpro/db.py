@@ -1,5 +1,6 @@
 """SQLite database for tracking processed claim emails."""
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 
@@ -16,6 +17,53 @@ CREATE TABLE IF NOT EXISTS processed_emails (
     status              TEXT NOT NULL DEFAULT 'pending',
     error_message       TEXT,
     UNIQUE(internet_message_id)
+);
+
+CREATE TABLE IF NOT EXISTS claim_data (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    email_id                INTEGER NOT NULL REFERENCES processed_emails(id),
+    -- Extracted fields (from PDF/email parsing)
+    insured_first_name      TEXT,
+    insured_last_name       TEXT,
+    insured_email           TEXT,
+    insured_phone           TEXT,
+    insured_cell            TEXT,
+    insured_address1        TEXT,
+    insured_city            TEXT,
+    insured_state           TEXT,
+    insured_zip             TEXT,
+    policy_number           TEXT,
+    secondary_insured_first TEXT,
+    secondary_insured_last  TEXT,
+    loss_date               TEXT,
+    loss_type               TEXT,
+    loss_description        TEXT,
+    loss_address1           TEXT,
+    loss_city               TEXT,
+    loss_state              TEXT,
+    loss_zip                TEXT,
+    client_company_name     TEXT,
+    client_claim_number     TEXT,
+    agent_company           TEXT,
+    agent_phone             TEXT,
+    agent_email             TEXT,
+    agent_address1          TEXT,
+    agent_city              TEXT,
+    agent_state             TEXT,
+    agent_zip               TEXT,
+    assigned_adjuster_name  TEXT,
+    policy_effective        TEXT,
+    policy_expiration       TEXT,
+    -- Resolved FileTrac IDs (from claimAdd lookups)
+    filetrac_company_id     TEXT,
+    filetrac_contact_id     TEXT,
+    filetrac_branch_id      TEXT,
+    filetrac_adjuster_id    TEXT,
+    filetrac_manager_id     TEXT,
+    filetrac_csrf_token     TEXT,
+    -- Full submission payload (JSON)
+    submission_payload      TEXT,
+    created_at              TEXT NOT NULL
 );
 """
 
@@ -72,6 +120,80 @@ class ClaimDatabase:
             (error_message, datetime.now(timezone.utc).isoformat(), row_id),
         )
         self._conn.commit()
+
+    def insert_claim_data(
+        self,
+        email_id: int,
+        claim_fields: dict,
+        resolved_ids: dict | None = None,
+        submission_payload: dict | None = None,
+    ) -> int:
+        resolved = resolved_ids or {}
+        cur = self._conn.execute(
+            """INSERT INTO claim_data (
+                email_id,
+                insured_first_name, insured_last_name, insured_email,
+                insured_phone, insured_cell, insured_address1,
+                insured_city, insured_state, insured_zip,
+                policy_number, secondary_insured_first, secondary_insured_last,
+                loss_date, loss_type, loss_description,
+                loss_address1, loss_city, loss_state, loss_zip,
+                client_company_name, client_claim_number,
+                agent_company, agent_phone, agent_email,
+                agent_address1, agent_city, agent_state, agent_zip,
+                assigned_adjuster_name, policy_effective, policy_expiration,
+                filetrac_company_id, filetrac_contact_id, filetrac_branch_id,
+                filetrac_adjuster_id, filetrac_manager_id, filetrac_csrf_token,
+                submission_payload, created_at
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )""",
+            (
+                email_id,
+                claim_fields.get("insured_first_name"),
+                claim_fields.get("insured_last_name"),
+                claim_fields.get("insured_email"),
+                claim_fields.get("insured_phone"),
+                claim_fields.get("insured_cell"),
+                claim_fields.get("insured_address1"),
+                claim_fields.get("insured_city"),
+                claim_fields.get("insured_state"),
+                claim_fields.get("insured_zip"),
+                claim_fields.get("policy_number"),
+                claim_fields.get("secondary_insured_first"),
+                claim_fields.get("secondary_insured_last"),
+                claim_fields.get("loss_date"),
+                claim_fields.get("loss_type"),
+                claim_fields.get("loss_description"),
+                claim_fields.get("loss_address1"),
+                claim_fields.get("loss_city"),
+                claim_fields.get("loss_state"),
+                claim_fields.get("loss_zip"),
+                claim_fields.get("client_company_name"),
+                claim_fields.get("client_claim_number"),
+                claim_fields.get("agent_company"),
+                claim_fields.get("agent_phone"),
+                claim_fields.get("agent_email"),
+                claim_fields.get("agent_address1"),
+                claim_fields.get("agent_city"),
+                claim_fields.get("agent_state"),
+                claim_fields.get("agent_zip"),
+                claim_fields.get("assigned_adjuster_name"),
+                claim_fields.get("policy_effective"),
+                claim_fields.get("policy_expiration"),
+                resolved.get("company_id"),
+                resolved.get("contact_id"),
+                resolved.get("branch_id"),
+                resolved.get("adjuster_id"),
+                resolved.get("manager_id"),
+                resolved.get("csrf_token"),
+                json.dumps(submission_payload) if submission_payload else None,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        self._conn.commit()
+        return cur.lastrowid
 
     def get_history(self, limit: int = 50) -> list[dict]:
         rows = self._conn.execute(

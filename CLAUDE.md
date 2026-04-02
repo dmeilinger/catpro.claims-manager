@@ -25,12 +25,15 @@ catpro/                     — Main package
   __init__.py
   process_claim.py          — Core pipeline: parse, extract, auth, submit
   email_source.py           — EmailSource Protocol + EML + Graph implementations
-  db.py                     — SQLite tracking
+  db.py                     — SQLite tracking (processed_emails + claim_data tables)
   config.py                 — Pydantic settings from .env
   poller.py                 — M365 polling loop
+  test_email.py             — Inject test emails into M365 mailbox
   adjusters.json            — Adjuster name → FileTrac ID mapping
 data/                       — Runtime data (gitignored except .gitkeep)
   claims.db                 — SQLite database (created at runtime)
+  templates/
+    sample_acuity_claim.eml — Mock Acuity claim with fake data (for testing)
 requirements.txt            — Python dependencies
 .env                        — Credentials (gitignored)
 docs/                       — Architecture and requirements
@@ -101,6 +104,14 @@ python3.13 -m catpro.poller
 ```
 Polls `M365_MAILBOX` for unread emails with PDF attachments, processes them through the claim pipeline, and tracks results in SQLite (`data/claims.db`).
 
+### Test email generator
+```bash
+python3.13 -m catpro.test_email                   # default mock, ref TG9999
+python3.13 -m catpro.test_email --ref 0001         # custom ref number
+python3.13 -m catpro.test_email --adjuster "Doug"  # custom adjuster name
+```
+Sends a real email (via Graph API `sendMail`) to the test mailbox with mock Acuity PDFs.
+
 ### Programmatic
 ```python
 from catpro.process_claim import parse_eml, extract_claim_fields, build_session, login, submit_claim
@@ -108,29 +119,46 @@ body, pdfs = parse_eml('email.eml')
 claim = extract_claim_fields(body, pdfs)
 session = build_session()
 login(session)
-result = submit_claim(session, claim)  # returns "claimID=NNNNNNN"
+result = submit_claim(session, claim)  # returns SubmitResult
+print(result.claim_id)                 # "claimID=NNNNNNN" or "DRY_RUN"
+print(result.claim_fields)             # extracted fields dict
+print(result.resolved_ids)             # FileTrac IDs (company, adjuster, etc.)
 ```
 
 ## M365 Email Polling
 
 - **`catpro/email_source.py`**: `EmailSource` Protocol + `EmlFileSource` (CLI) + `GraphMailSource` (Graph API via `msal`)
-- **`catpro/db.py`**: SQLite tracking — `processed_emails` table ties emails to FileTrac claim IDs
+- **`catpro/db.py`**: SQLite tracking — `processed_emails` + `claim_data` tables
 - **`catpro/config.py`**: Pydantic `Settings` loading all `.env` vars
 - **`catpro/poller.py`**: `while True` loop with SIGTERM handling for Docker
 
-### Azure AD Setup Required
+Processed emails are marked read and moved to a **"Processed"** folder in the mailbox (auto-created). Failed emails stay unread in inbox for manual review.
 
-CatPro is a separate M365 tenant. Requires app registration with `Mail.Read` + `Mail.ReadWrite` application permissions in the CatPro Azure AD tenant. See `docs/architecture.md` for full setup steps.
+### Azure AD Setup
+
+CatPro tenant app registration: `FileTrac Claim Poller` (app ID `7d22b1a4-b8de-4e14-a1af-bf9ffc235ea7`).
+Permissions: `Mail.Read`, `Mail.ReadWrite`, `Mail.Send` (application). See `docs/architecture.md` for setup steps.
+
+Azure CLI tenant isolation:
+```bash
+az-catpro <command>    # uses ~/.azure/catpro config dir
+az-litera <command>    # uses ~/.azure/litera config dir
+```
 
 ### Additional `.env` variables
 ```
 AZURE_TENANT_ID=<catpro-tenant-guid>
 AZURE_CLIENT_ID=<app-client-id>
 AZURE_CLIENT_SECRET=<app-secret>
-M365_MAILBOX=claims@catpro.us.com
+M365_MAILBOX=claims-test@catpro.us.com
 POLL_INTERVAL_SECONDS=60
 DB_PATH=data/claims.db
+DRY_RUN=true
 ```
+
+### DRY_RUN mode
+
+`DRY_RUN=true` runs the full pipeline (poll, parse, extract, auth, CSRF, resolve IDs) but skips the final `POST claimSave.asp`. No billable claim created. All extracted data and the would-be payload are still saved to SQLite. Set `DRY_RUN=false` for production.
 
 ## Future: FastAPI + Docker
 

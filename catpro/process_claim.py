@@ -589,8 +589,16 @@ def _now_time() -> str:
     return datetime.now().strftime("%-I:%M %p")
 
 
-def submit_claim(session: requests.Session, claim: ClaimData) -> str:
-    """Submit claim to FileTrac. Returns file number or 'submitted'."""
+class SubmitResult(pydantic.BaseModel):
+    """Result of a claim submission attempt."""
+    claim_id: str  # "claimID=NNNNNNN", "DRY_RUN", etc.
+    claim_fields: dict  # ClaimData as dict
+    resolved_ids: dict  # FileTrac IDs resolved during submission
+    payload: dict | None = None  # Full form payload (if built)
+
+
+def submit_claim(session: requests.Session, claim: ClaimData) -> SubmitResult:
+    """Submit claim to FileTrac. Returns SubmitResult with claim data and resolved IDs."""
 
     # GET claim form — extracts CSRF token and default form values
     resp = session.get(CLAIM_FORM_URL, timeout=TIMEOUT)
@@ -632,6 +640,15 @@ def submit_claim(session: requests.Session, claim: ClaimData) -> str:
 
     # ACmgrID — first real manager option in the form select
     acmgr_id = _parse_select_first_value(html, "ACmgrID")
+
+    resolved_ids = {
+        "company_id": company_id,
+        "contact_id": contact_id,
+        "branch_id": abid,
+        "adjuster_id": adjuster_id,
+        "manager_id": acmgr_id,
+        "csrf_token": csrf_token,
+    }
 
     now = _now_time()
 
@@ -835,23 +852,47 @@ def submit_claim(session: requests.Session, claim: ClaimData) -> str:
         "workQID":         "0",
     }
 
+    # Dry-run: stop before the billable POST
+    if os.environ.get("DRY_RUN", "").lower() in ("1", "true", "yes"):
+        print("[DRY RUN] Skipping claim submission POST — payload ready:")
+        print(f"  Insured: {claim.insured_first_name} {claim.insured_last_name}")
+        print(f"  Policy:  {claim.policy_number}")
+        print(f"  Loss:    {claim.loss_date} — {claim.loss_type}")
+        print(f"  Client:  {claim.client_company_name} #{claim.client_claim_number}")
+        print(f"  Adjuster ID: {adjuster_id} | Company ID: {company_id}")
+        print(f"  CSRF token: {csrf_token[:20]}...")
+        return SubmitResult(
+            claim_id="DRY_RUN",
+            claim_fields=claim.model_dump(),
+            resolved_ids=resolved_ids,
+            payload=payload,
+        )
+
     resp = session.post(CLAIM_SAVE_URL, data=payload, timeout=TIMEOUT, allow_redirects=True)
     resp.raise_for_status()
+
+    def _result(cid: str) -> SubmitResult:
+        return SubmitResult(
+            claim_id=cid,
+            claim_fields=claim.model_dump(),
+            resolved_ids=resolved_ids,
+            payload=payload,
+        )
 
     # Success: response body contains <!-- claimID = [NNNNNNN] -->
     m = re.search(r"<!--\s*claimID\s*=\s*\[(\d+)\]", resp.text)
     if m:
-        return f"claimID={m.group(1)}"
+        return _result(f"claimID={m.group(1)}")
 
     # Also check redirect URL (claimList.asp?searchTgt=...)
     m = re.search(r"searchTgt=(\d+)", resp.url)
     if m:
-        return f"claimID={m.group(1)}"
+        return _result(f"claimID={m.group(1)}")
 
     # Try to extract file number from response body (format: YY-NNNNN, e.g. "26-00123")
     match = re.search(r"\b(2[0-9]-\d{4,6})\b", resp.text)
     if match:
-        return match.group(1)
+        return _result(match.group(1))
 
     # Failure: check for validation errors in response
     alerts = re.findall(r"alert\(['\"](.+?)['\"]\)", resp.text)
@@ -859,7 +900,7 @@ def submit_claim(session: requests.Session, claim: ClaimData) -> str:
     if real_errors:
         raise RuntimeError(f"Claim submission failed: {'; '.join(real_errors[:3])}")
 
-    return f"submitted (final URL: {resp.url})"
+    return _result(f"submitted (final URL: {resp.url})")
 
 
 # ── Phase 5: Main ─────────────────────────────────────────────────────────────
@@ -889,8 +930,8 @@ def main() -> None:
     print("      Authenticated.")
 
     print("[4/4] Submitting claim...")
-    file_number = submit_claim(session, claim)
-    print(f"      Claim created: {file_number}")
+    result = submit_claim(session, claim)
+    print(f"      Claim created: {result.claim_id}")
 
 
 if __name__ == "__main__":

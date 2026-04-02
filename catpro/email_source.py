@@ -185,12 +185,46 @@ class GraphMailSource:
         )
         return messages
 
-    def mark_read(self, message_id: str) -> None:
-        """Mark a message as read in the shared mailbox."""
-        url = f"{self.GRAPH_BASE}/users/{self._mailbox}/messages/{message_id}"
-        self._request(
-            "PATCH",
-            url,
-            json={"isRead": True},
-            headers={**self._headers(), "Content-Type": "application/json"},
+    def _ensure_folder(self, folder_name: str) -> str:
+        """Get or create a mail folder. Returns the folder ID."""
+        token = self._token or self._get_token()
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        # Check if folder exists
+        url = (
+            f"{self.GRAPH_BASE}/users/{self._mailbox}/mailFolders"
+            f"?$filter=displayName eq '{folder_name}'"
         )
+        resp = http_requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        folders = resp.json().get("value", [])
+        if folders:
+            return folders[0]["id"]
+
+        # Create it
+        resp = http_requests.post(
+            f"{self.GRAPH_BASE}/users/{self._mailbox}/mailFolders",
+            headers=headers,
+            json={"displayName": folder_name},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()["id"]
+
+    def mark_read(self, message_id: str) -> None:
+        """Mark as read and move to Processed folder."""
+        token = self._token or self._get_token()
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        # Mark as read
+        url = f"{self.GRAPH_BASE}/users/{self._mailbox}/messages/{message_id}"
+        http_requests.patch(
+            url, headers=headers, json={"isRead": True}, timeout=10,
+        ).raise_for_status()
+
+        # Move to Processed folder
+        folder_id = self._ensure_folder("Processed")
+        move_url = f"{self.GRAPH_BASE}/users/{self._mailbox}/messages/{message_id}/move"
+        http_requests.post(
+            move_url, headers=headers, json={"destinationId": folder_id}, timeout=10,
+        ).raise_for_status()
