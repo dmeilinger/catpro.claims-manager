@@ -18,9 +18,27 @@ Build an agent that reads incoming claim emails and automatically creates claims
 
 Always use **`python3.13`** — system `python3` is 3.9, `pip3` targets 3.13.
 
+## Project Structure
+
+```
+catpro/                     — Main package
+  __init__.py
+  process_claim.py          — Core pipeline: parse, extract, auth, submit
+  email_source.py           — EmailSource Protocol + EML + Graph implementations
+  db.py                     — SQLite tracking
+  config.py                 — Pydantic settings from .env
+  poller.py                 — M365 polling loop
+  adjusters.json            — Adjuster name → FileTrac ID mapping
+data/                       — Runtime data (gitignored except .gitkeep)
+  claims.db                 — SQLite database (created at runtime)
+requirements.txt            — Python dependencies
+.env                        — Credentials (gitignored)
+docs/                       — Architecture and requirements
+```
+
 ## Authentication
 
-Fully implemented in `process_claim.py`. Three-step flow:
+Fully implemented in `catpro/process_claim.py`. Three-step flow:
 
 1. **AWS Cognito SRP** — `pycognito` handles SRP handshake + SOFTWARE_TOKEN_MFA challenge
 2. **TOTP** — generated via `pyotp` from `FILETRAC_TOTP_SECRET`; window-boundary guard (waits if <5s remaining)
@@ -70,15 +88,22 @@ The `ACmgrID` select on `claimAdd.asp` has real manager options. `_parse_select_
 
 LLM extraction not used — add later for other insurers.
 
-## Entry Point
+## Entry Points
 
+### CLI (single file)
 ```bash
-python3.13 process_claim.py Fw_TG4832.eml
+python3.13 -m catpro.process_claim Fw_TG4832.eml
 ```
 
-Or programmatically:
+### Poller (M365 mailbox)
+```bash
+python3.13 -m catpro.poller
+```
+Polls `M365_MAILBOX` for unread emails with PDF attachments, processes them through the claim pipeline, and tracks results in SQLite (`data/claims.db`).
+
+### Programmatic
 ```python
-from process_claim import parse_eml, extract_claim_fields, build_session, login, submit_claim
+from catpro.process_claim import parse_eml, extract_claim_fields, build_session, login, submit_claim
 body, pdfs = parse_eml('email.eml')
 claim = extract_claim_fields(body, pdfs)
 session = build_session()
@@ -86,12 +111,30 @@ login(session)
 result = submit_claim(session, claim)  # returns "claimID=NNNNNNN"
 ```
 
-## Next Phase: MS O365 Integration
+## M365 Email Polling
 
-Replace file-based EML input with Microsoft 365 email trigger:
-- Watch a shared mailbox (e.g. claims@catpro.us.com) via MS Graph API / webhooks
-- On new email with PDF attachments → pipe through `process_claim.py` pipeline
-- Relevant M365 MCP tools available: `mcp__claude_ai_Microsoft_365__*`
+- **`catpro/email_source.py`**: `EmailSource` Protocol + `EmlFileSource` (CLI) + `GraphMailSource` (Graph API via `msal`)
+- **`catpro/db.py`**: SQLite tracking — `processed_emails` table ties emails to FileTrac claim IDs
+- **`catpro/config.py`**: Pydantic `Settings` loading all `.env` vars
+- **`catpro/poller.py`**: `while True` loop with SIGTERM handling for Docker
+
+### Azure AD Setup Required
+
+CatPro is a separate M365 tenant. Requires app registration with `Mail.Read` + `Mail.ReadWrite` application permissions in the CatPro Azure AD tenant. See `docs/architecture.md` for full setup steps.
+
+### Additional `.env` variables
+```
+AZURE_TENANT_ID=<catpro-tenant-guid>
+AZURE_CLIENT_ID=<app-client-id>
+AZURE_CLIENT_SECRET=<app-secret>
+M365_MAILBOX=claims@catpro.us.com
+POLL_INTERVAL_SECONDS=60
+DB_PATH=data/claims.db
+```
+
+## Future: FastAPI + Docker
+
+The poller is designed for future FastAPI deployment — `poll_once()` wraps in `asyncio.to_thread`, plus webhook endpoint for real-time triggers. See `docs/architecture.md` Phase 3.
 
 ## Browser Automation (exploration only)
 

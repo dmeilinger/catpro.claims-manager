@@ -128,31 +128,149 @@ Parses `ACmgrID` select from `claimAdd.asp` HTML. Skips placeholder values: `-1`
 | `COGNITO_CLIENT_ID` | `1frtspmi2af7o8hqtfsfebrc6` | FTEvolve Cognito app client |
 | UNASSIGNED adjuster | `302465` | FileTrac ID for UNASSIGNED (not `0`) |
 
-## Phase 2: MS O365 Integration (Planned)
+## Phase 2: MS O365 Email Polling
 
-Replace manual `.eml` file input with automatic mailbox watching:
+Automatic mailbox polling replaces manual `.eml` file input.
 
-- **Trigger**: New email in shared claims mailbox (e.g. `claims@catpro.us.com`)
-- **API**: Microsoft Graph API — either webhook subscriptions or polling
-- **MCP tools available**: `mcp__claude_ai_Microsoft_365__*` (configured globally)
-- **Integration point**: Retrieve email + attachments → pass to existing `parse_eml` / `extract_claim_fields` / `submit_claim` pipeline unchanged
+### Architecture
+
+```
+GraphMailSource (email_source.py)
+    │  MS Graph API — client credentials flow (msal)
+    │  GET /users/{mailbox}/messages?$filter=isRead eq false
+    │  $expand=attachments (inline base64 PDF bytes)
+    ▼
+EmailMessage(NamedTuple)
+    │  Normalized: message_id, internet_message_id, subject,
+    │              sender, received_at, body_text, pdfs dict
+    ▼
+Poller (poller.py)
+    │  while True: poll_once() → sleep(interval)
+    │  Dedup via ClaimDatabase.is_duplicate()
+    │  Reuses single FileTrac session per cycle
+    ▼
+extract_claim_fields()  →  login()  →  submit_claim()
+    │  (unchanged from Phase 1)
+    ▼
+ClaimDatabase (db.py)
+    │  SQLite — insert_pending → mark_success(claim_id) / mark_error
+    ▼
+claims.db
+```
+
+### Email Source Abstraction (`email_source.py`)
+
+`EmailSource` is a `typing.Protocol` with two methods:
+- `fetch_unread() -> list[EmailMessage]` — return unread messages with PDFs
+- `mark_read(message_id: str) -> None` — mark as read in the source system
+
+Implementations:
+| Class | Use case |
+|-------|----------|
+| `EmlFileSource` | CLI / testing — wraps existing `parse_eml()` |
+| `GraphMailSource` | Production — polls M365 shared mailbox via Graph API |
+
+This enables future webhook triggers: a webhook handler constructs `EmailMessage` directly and calls `_process_message()` — no new source class needed.
+
+### Graph API Authentication
+
+CatPro is a separate M365 tenant. Uses `msal.ConfidentialClientApplication` with client credentials flow (application permissions, no user interaction).
+
+**Azure AD prerequisites** (manual setup in CatPro tenant):
+1. Register application → tenant ID + client ID
+2. Add API permissions: `Mail.Read`, `Mail.ReadWrite` (Application type)
+3. Grant admin consent
+4. Create client secret → store in `.env`
+5. (Recommended) Application access policy to restrict to shared mailbox only
+
+### SQLite Tracking (`db.py`)
+
+```sql
+CREATE TABLE processed_emails (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id          TEXT NOT NULL,      -- Graph API message ID
+    internet_message_id TEXT NOT NULL,      -- RFC 2822 Message-ID (dedup key)
+    subject             TEXT,
+    sender              TEXT,
+    received_at         TEXT,
+    processed_at        TEXT NOT NULL,
+    claim_id            TEXT,              -- FileTrac claim ID (e.g. "claimID=1234567")
+    status              TEXT NOT NULL,     -- pending | success | error
+    error_message       TEXT,
+    UNIQUE(internet_message_id)
+);
+```
+
+Crash-safe: row inserted as `pending` before processing. Updated to `success`/`error` after.
+
+### Configuration (`config.py`)
+
+Pydantic `Settings` class loads all config from `.env`:
+
+```
+# Azure AD (CatPro tenant)
+AZURE_TENANT_ID=<guid>
+AZURE_CLIENT_ID=<guid>
+AZURE_CLIENT_SECRET=<secret>
+M365_MAILBOX=claims@catpro.us.com
+
+# Polling
+POLL_INTERVAL_SECONDS=60
+DB_PATH=claims.db
+```
+
+### Entry Points
+
+```bash
+python3.13 -m catpro.poller              # poll mailbox
+python3.13 -m catpro.process_claim email.eml  # process single EML file
+```
+
+Handles SIGTERM/SIGINT for clean Docker shutdown (1-second interruptible sleep).
+
+### Error Handling
+
+- **Failed emails**: marked `error` in DB, left unread in mailbox for manual review
+- **Session expiry**: re-authenticates to FileTrac with one retry
+- **Graph API token refresh**: automatic on 401
+- **TOTP safety**: single FileTrac session reused across all messages in a poll cycle
+
+## Phase 3: FastAPI Deployment (Planned)
+
+Future deployment as a Docker container with FastAPI:
+
+- `Poller.poll_once()` wrapped in `asyncio.to_thread` as a background task
+- `POST /webhook` endpoint for MS Graph change notifications (replaces polling)
+- `GET /history` endpoint backed by `ClaimDatabase.get_history()`
+- `GET /health` endpoint
+- SQLite DB on a Docker volume (not ephemeral container filesystem)
+- Deployed via `uvicorn` in a `Dockerfile`
 
 ## Security
 
-- All credentials in `.env` (gitignored): `FILETRAC_EMAIL`, `FILETRAC_PASSWORD`, `FILETRAC_TOTP_SECRET`
+- All credentials in `.env` (gitignored): `FILETRAC_EMAIL`, `FILETRAC_PASSWORD`, `FILETRAC_TOTP_SECRET`, `AZURE_*`
 - No credentials in logs, stdout, or committed files
 - `adjusters.json` contains no credentials — safe to commit
+- Azure AD app should be scoped to shared mailbox only via application access policy
 
 ## File Structure
 
 ```
-process_claim.py          — Main pipeline (all phases)
-adjusters.json            — Adjuster name → FileTrac ID mapping
-requirements.txt          — Python dependencies
-.env                      — Credentials (gitignored)
+catpro/                     — Main Python package
+  __init__.py
+  process_claim.py          — Core pipeline: parse, extract, auth, submit (Phase 1)
+  email_source.py           — Email source abstraction: Protocol + EML + Graph API
+  db.py                     — SQLite tracking: processed emails ↔ claim IDs
+  config.py                 — Pydantic settings from .env
+  poller.py                 — Polling loop + orchestration (Phase 2 entry point)
+  adjusters.json            — Adjuster name → FileTrac ID mapping
+data/                       — Runtime data (gitignored except .gitkeep)
+  claims.db                 — SQLite database (created at runtime)
+requirements.txt            — Python dependencies
+.env                        — Credentials (gitignored)
 docs/
-  product-requirements.md — Business context and requirements
-  architecture.md         — This document
-  brainstorms/            — Early design notes (historical)
-  plans/                  — Implementation plans (historical)
+  product-requirements.md   — Business context and requirements
+  architecture.md           — This document
+  brainstorms/              — Early design notes (historical)
+  plans/                    — Implementation plans (historical)
 ```
