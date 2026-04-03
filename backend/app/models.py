@@ -8,6 +8,19 @@ class Base(DeclarativeBase):
     pass
 
 
+class AppConfig(Base):
+    """Singleton application configuration table (always id=1)."""
+
+    __tablename__ = "app_config"
+
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    dry_run: Mapped[bool] = mapped_column(default=False)
+    test_mode: Mapped[bool] = mapped_column(default=False)
+    test_adjuster_id: Mapped[str] = mapped_column(String, default="342436")
+    test_branch_id: Mapped[str] = mapped_column(String, default="2529")
+    updated_at: Mapped[str | None]
+
+
 class ProcessedEmail(Base):
     __tablename__ = "processed_emails"
 

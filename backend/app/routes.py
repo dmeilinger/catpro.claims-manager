@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session, contains_eager, joinedload
 
 from app.config import Settings, get_settings
 from app.database import get_db
-from app.models import ClaimData, ProcessedEmail
+from app.models import AppConfig, ClaimData, ProcessedEmail
 from app.schemas import (
+    AppConfigSchema,
+    AppConfigUpdate,
     ClaimDetail,
     ClaimDataSchema,
     ClaimListResponse,
@@ -311,3 +313,37 @@ def health_check(session: SessionDep, settings: SettingsDep):
         recent_error_rate=error_rate,
         poll_interval=settings.poll_interval_seconds,
     )
+
+
+def _get_or_create_config(session: Session) -> AppConfig:
+    """Return the singleton AppConfig row, creating it with defaults if absent."""
+    cfg = session.get(AppConfig, 1)
+    if cfg is None:
+        cfg = AppConfig(
+            id=1, dry_run=False, test_mode=False,
+            test_adjuster_id="342436", test_branch_id="2529",
+        )
+        session.add(cfg)
+        session.commit()
+        session.refresh(cfg)
+    return cfg
+
+
+@router.get("/config", response_model=AppConfigSchema)
+def get_config(session: SessionDep):
+    """Return the singleton application configuration."""
+    return _get_or_create_config(session)
+
+
+@router.put("/config", response_model=AppConfigSchema)
+def update_config(body: AppConfigUpdate, session: SessionDep):
+    """Partially update the application configuration."""
+    from datetime import datetime, timezone
+
+    cfg = _get_or_create_config(session)
+    for field, value in body.model_dump(exclude_none=True).items():
+        setattr(cfg, field, value)
+    cfg.updated_at = datetime.now(timezone.utc).isoformat()
+    session.commit()
+    session.refresh(cfg)
+    return cfg

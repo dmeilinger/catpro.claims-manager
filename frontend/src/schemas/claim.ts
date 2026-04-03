@@ -1,5 +1,15 @@
 import { z } from "zod";
 
+export const AppConfigSchema = z.object({
+  dry_run: z.boolean(),
+  test_mode: z.boolean(),
+  test_adjuster_id: z.string(),
+  test_branch_id: z.string(),
+  updated_at: z.string().nullable(),
+});
+
+export type AppConfig = z.infer<typeof AppConfigSchema>;
+
 export const ClaimStatsSchema = z.object({
   total: z.number(),
   success: z.number(),

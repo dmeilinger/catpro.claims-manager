@@ -3,12 +3,13 @@ import { Outlet, useLocation } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { useHealth } from "@/hooks/useHealth";
+import { useAppConfig } from "@/hooks/useAppConfig";
 import { cn } from "@/lib/utils";
 
 const pageTitles: Record<string, string> = {
   "/": "Dashboard",
   "/claims": "Claims",
-  "/settings/adjusters": "Adjusters",
+  "/settings": "Settings",
   "/health": "System Health",
 };
 
@@ -16,6 +17,7 @@ export function AppLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const { data: health } = useHealth();
+  const { data: config } = useAppConfig();
 
   const title = pageTitles[location.pathname] || "CatPro Claims";
 
@@ -32,6 +34,8 @@ export function AppLayout() {
           title={title}
           healthStatus={health?.status}
           lastProcessedAt={health?.last_processed_at}
+          dryRun={config?.dry_run}
+          testMode={config?.test_mode}
         />
         <main className="p-6">
           <Outlet />

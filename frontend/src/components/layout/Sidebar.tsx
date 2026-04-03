@@ -13,7 +13,7 @@ const navItems = [
 ];
 
 const settingsItems = [
-  { to: "/settings/adjusters", icon: Settings, label: "Adjusters" },
+  { to: "/settings", icon: Settings, label: "Settings" },
 ];
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {

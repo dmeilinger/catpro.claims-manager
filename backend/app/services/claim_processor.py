@@ -597,7 +597,15 @@ class SubmitResult(pydantic.BaseModel):
     payload: dict | None = None  # Full form payload (if built)
 
 
-def submit_claim(session: requests.Session, claim: ClaimData) -> SubmitResult:
+def submit_claim(
+    session: requests.Session,
+    claim: ClaimData,
+    *,
+    dry_run: bool = False,
+    test_mode: bool = False,
+    test_adjuster_id: str = "342436",
+    test_branch_id: str = "2529",
+) -> SubmitResult:
     """Submit claim to FileTrac. Returns SubmitResult with claim data and resolved IDs."""
 
     # GET claim form — extracts CSRF token and default form values
@@ -649,6 +657,14 @@ def submit_claim(session: requests.Session, claim: ClaimData) -> SubmitResult:
         "manager_id": acmgr_id,
         "csrf_token": csrf_token,
     }
+
+    # Test mode: override IDs with configured test account values
+    if test_mode:
+        resolved_ids["adjuster_id"] = test_adjuster_id
+        resolved_ids["branch_id"] = test_branch_id
+        adjuster_id = test_adjuster_id
+        abid = test_branch_id
+        print(f"[TEST MODE] Overriding adjuster={adjuster_id}, branch={abid}")
 
     now = _now_time()
 
@@ -853,7 +869,7 @@ def submit_claim(session: requests.Session, claim: ClaimData) -> SubmitResult:
     }
 
     # Dry-run: stop before the billable POST
-    if os.environ.get("DRY_RUN", "").lower() in ("1", "true", "yes"):
+    if dry_run:
         print("[DRY RUN] Skipping claim submission POST — payload ready:")
         print(f"  Insured: {claim.insured_first_name} {claim.insured_last_name}")
         print(f"  Policy:  {claim.policy_number}")

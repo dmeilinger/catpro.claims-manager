@@ -34,9 +34,6 @@ class Settings(BaseSettings):
     poll_interval_seconds: int = 60
     db_path: str = "data/claims.db"
 
-    # Dry run - full pipeline except the final claim submission POST
-    dry_run: bool = False
-
     # API server
     host: str = "127.0.0.1"
     port: int = 8000

@@ -41,15 +41,16 @@ class Poller:
     def _process_message(self, msg: EmailMessage):
         """Process a single email through the claim pipeline. Returns SubmitResult."""
         claim = extract_claim_fields(msg.body_text, msg.pdfs)
+        cfg = self._db.get_app_config()
         self._ensure_session()
         try:
-            return submit_claim(self._session, claim)
+            return submit_claim(self._session, claim, **cfg)
         except Exception:
             # Session may have expired — re-auth and retry once
             log.warning("Claim submission failed, re-authenticating...")
             self._session = build_session()
             login(self._session)
-            return submit_claim(self._session, claim)
+            return submit_claim(self._session, claim, **cfg)
 
     def poll_once(self) -> None:
         """Single poll iteration: fetch unread → skip duplicates → process → update DB."""

@@ -7,6 +7,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Dashboard } from "@/pages/Dashboard";
 import { Claims } from "@/pages/Claims";
+import { Settings } from "@/pages/Settings";
 import "./index.css";
 
 const router = createBrowserRouter([
@@ -16,14 +17,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Dashboard /> },
       { path: "claims", element: <Claims /> },
-      {
-        path: "settings/adjusters",
-        element: (
-          <div className="text-muted-foreground">
-            Adjusters — coming soon
-          </div>
-        ),
-      },
+      { path: "settings", element: <Settings /> },
       {
         path: "health",
         element: (

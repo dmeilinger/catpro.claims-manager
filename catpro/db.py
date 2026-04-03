@@ -202,5 +202,29 @@ class ClaimDatabase:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_app_config(self) -> dict:
+        """Return the singleton app_config row. Falls back to safe defaults if table absent."""
+        defaults = {
+            "dry_run": False,
+            "test_mode": False,
+            "test_adjuster_id": "342436",
+            "test_branch_id": "2529",
+        }
+        try:
+            row = self._conn.execute(
+                "SELECT dry_run, test_mode, test_adjuster_id, test_branch_id "
+                "FROM app_config WHERE id = 1"
+            ).fetchone()
+        except Exception:
+            return defaults
+        if row is None:
+            return defaults
+        return {
+            "dry_run": bool(row["dry_run"]),
+            "test_mode": bool(row["test_mode"]),
+            "test_adjuster_id": row["test_adjuster_id"] or defaults["test_adjuster_id"],
+            "test_branch_id": row["test_branch_id"] or defaults["test_branch_id"],
+        }
+
     def close(self) -> None:
         self._conn.close()

@@ -150,3 +150,20 @@ class HealthResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+class AppConfigSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    dry_run: bool
+    test_mode: bool
+    test_adjuster_id: str
+    test_branch_id: str
+    updated_at: str | None = None
+
+
+class AppConfigUpdate(BaseModel):
+    dry_run: bool | None = None
+    test_mode: bool | None = None
+    test_adjuster_id: str | None = None
+    test_branch_id: str | None = None
