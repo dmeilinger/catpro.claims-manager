@@ -6,6 +6,7 @@ import { queryClient } from "@/lib/queryClient";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Dashboard } from "@/pages/Dashboard";
+import { Claims } from "@/pages/Claims";
 import "./index.css";
 
 const router = createBrowserRouter([
@@ -14,7 +15,7 @@ const router = createBrowserRouter([
     element: <AppLayout />,
     children: [
       { index: true, element: <Dashboard /> },
-      { path: "claims", element: <Dashboard /> },
+      { path: "claims", element: <Claims /> },
       {
         path: "settings/adjusters",
         element: (
