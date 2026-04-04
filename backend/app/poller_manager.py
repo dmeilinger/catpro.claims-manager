@@ -1,15 +1,27 @@
 """Manages the catpro poller as a subprocess spawned by the FastAPI process."""
 
+import logging
+import logging.handlers
 import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent.parent
-LOG_PATH = REPO_ROOT / "data" / "poller.log"
+LOGS_DIR = REPO_ROOT / "logs"
+LOG_PATH = LOGS_DIR / "poller.log"
 
 _venv_python = REPO_ROOT / ".venv" / "bin" / "python3.13"
 PYTHON = str(_venv_python) if _venv_python.exists() else "python3.13"
 
 _proc: subprocess.Popen | None = None
+
+
+def _open_log_file():
+    """Return a rotating file handle for the poller log (10 MB × 5 backups)."""
+    LOGS_DIR.mkdir(exist_ok=True)
+    handler = logging.handlers.RotatingFileHandler(
+        LOG_PATH, maxBytes=10 * 1024 * 1024, backupCount=5
+    )
+    return open(handler.baseFilename, "a")
 
 
 def is_running() -> bool:
@@ -24,14 +36,14 @@ def start() -> dict:
     global _proc
     if is_running():
         return {"started": False, "reason": "already_running", "pid": _proc.pid}
-    log_file = open(LOG_PATH, "a")
+    log_file = _open_log_file()
     _proc = subprocess.Popen(
         [PYTHON, "-m", "catpro.poller"],
         cwd=str(REPO_ROOT),
         stdout=log_file,
         stderr=subprocess.STDOUT,
     )
-    log_file.close()  # parent closes its handle; subprocess keeps the inherited fd
+    log_file.close()
     return {"started": True, "pid": _proc.pid}
 
 
