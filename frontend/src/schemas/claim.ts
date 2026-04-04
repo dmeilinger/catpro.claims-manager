@@ -6,6 +6,11 @@ export const AppConfigSchema = z.object({
   test_adjuster_id: z.string(),
   test_branch_id: z.string(),
   updated_at: z.string().nullable(),
+  poller_enabled: z.boolean().default(true),
+  poller_status: z.string().nullable().default(null),
+  last_heartbeat: z.string().nullable().default(null),
+  last_run_at: z.string().nullable().default(null),
+  last_error: z.string().nullable().default(null),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -109,6 +114,13 @@ export const HealthResponseSchema = z.object({
   recent_error_rate: z.number().nullable(),
   poll_interval: z.number(),
 });
+
+export const PollerProcessStatusSchema = z.object({
+  running: z.boolean(),
+  pid: z.number().nullable(),
+});
+
+export type PollerProcessStatus = z.infer<typeof PollerProcessStatusSchema>;
 
 // Inferred types
 export type ClaimStats = z.infer<typeof ClaimStatsSchema>;

@@ -95,6 +95,13 @@ class Poller:
             except Exception as e:
                 log.warning("Could not mark as read: %s -> %s", msg.subject, e)
 
+    def _sleep(self) -> None:
+        """Interruptible sleep — checks _running every second for clean shutdown."""
+        for _ in range(self._settings.poll_interval_seconds):
+            if not self._running:
+                break
+            time.sleep(1)
+
     def run(self) -> None:
         """Main polling loop with graceful shutdown on SIGTERM/SIGINT."""
         signal.signal(signal.SIGTERM, lambda *_: setattr(self, "_running", False))
@@ -107,17 +114,25 @@ class Poller:
         )
 
         while self._running:
+            if not self._db.is_poller_enabled():
+                log.debug("Poller disabled — skipping cycle")
+                self._db.update_poller_heartbeat("disabled")
+                self._sleep()
+                continue
+
+            self._db.update_poller_heartbeat("running")
             try:
                 self.poll_once()
+                self._db.update_poller_run_result(None)
+                self._db.update_poller_heartbeat("idle")
             except Exception as e:
                 log.error("Poll cycle error: %s", e, exc_info=True)
+                self._db.update_poller_run_result(str(e))
+                self._db.update_poller_heartbeat("error")
 
-            # Interruptible sleep — checks _running every second for clean shutdown
-            for _ in range(self._settings.poll_interval_seconds):
-                if not self._running:
-                    break
-                time.sleep(1)
+            self._sleep()
 
+        self._db.update_poller_heartbeat("disabled")
         self._db.close()
         log.info("Poller stopped")
 

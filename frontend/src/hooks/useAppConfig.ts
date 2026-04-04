@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import apiClient from "@/lib/api";
 import { AppConfigSchema, type AppConfig } from "@/schemas/claim";
 
-export function useAppConfig() {
+export function useAppConfig(options?: { refetchInterval?: number }) {
   return useQuery<AppConfig>({
     queryKey: ["config"],
     queryFn: async () => {
@@ -10,6 +10,7 @@ export function useAppConfig() {
       return AppConfigSchema.parse(data);
     },
     staleTime: 30_000,
+    refetchInterval: options?.refetchInterval,
   });
 }
 

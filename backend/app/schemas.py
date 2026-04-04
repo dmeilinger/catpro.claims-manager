@@ -160,6 +160,11 @@ class AppConfigSchema(BaseModel):
     test_adjuster_id: str
     test_branch_id: str
     updated_at: str | None = None
+    poller_enabled: bool = True
+    poller_status: str | None = None
+    last_heartbeat: str | None = None
+    last_run_at: str | None = None
+    last_error: str | None = None
 
 
 class AppConfigUpdate(BaseModel):
@@ -167,3 +172,13 @@ class AppConfigUpdate(BaseModel):
     test_mode: bool | None = None
     test_adjuster_id: str | None = None
     test_branch_id: str | None = None
+    poller_enabled: bool | None = None
+
+
+class PollerProcessStatus(BaseModel):
+    running: bool
+    pid: int | None = None
+
+
+class PollerLogsResponse(BaseModel):
+    lines: list[str]

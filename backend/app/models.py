@@ -19,6 +19,11 @@ class AppConfig(Base):
     test_adjuster_id: Mapped[str] = mapped_column(String, default="342436")
     test_branch_id: Mapped[str] = mapped_column(String, default="2529")
     updated_at: Mapped[str | None]
+    poller_enabled: Mapped[bool] = mapped_column(default=True)
+    poller_status: Mapped[str | None]
+    last_heartbeat: Mapped[str | None]
+    last_run_at: Mapped[str | None]
+    last_error: Mapped[str | None]
 
 
 class ProcessedEmail(Base):

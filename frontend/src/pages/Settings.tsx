@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAppConfig, useUpdateAppConfig } from "@/hooks/useAppConfig";
+import { usePollerStatus, useStartPoller, useStopPoller, usePollerLogs } from "@/hooks/usePoller";
 import { type AppConfig } from "@/schemas/claim";
 import { cn } from "@/lib/utils";
 
@@ -55,9 +56,39 @@ function SettingRow({
   );
 }
 
+const POLLER_STATUS_STYLES: Record<string, { dot: string; label: string }> = {
+  idle:     { dot: "bg-green-500",  label: "Idle" },
+  running:  { dot: "bg-amber-400",  label: "Running" },
+  error:    { dot: "bg-red-500",    label: "Error" },
+  disabled: { dot: "bg-zinc-500",   label: "Disabled" },
+};
+
+function PollerStatusBadge({ status }: { status: string | null }) {
+  const style = status ? (POLLER_STATUS_STYLES[status] ?? { dot: "bg-zinc-500", label: status }) : { dot: "bg-zinc-600", label: "Never run" };
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className={cn("inline-block h-2 w-2 rounded-full", style.dot)} />
+      <span className="text-sm text-foreground">{style.label}</span>
+    </span>
+  );
+}
+
+function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-4 py-3 border-b border-border last:border-0">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <span className="text-sm text-foreground text-right max-w-xs break-words">{value ?? "—"}</span>
+    </div>
+  );
+}
+
 export function Settings() {
-  const { data: config, isLoading } = useAppConfig();
+  const { data: config, isLoading } = useAppConfig({ refetchInterval: 15_000 });
   const { mutate: updateConfig, isPending: isSaving } = useUpdateAppConfig();
+  const { data: pollerProcess } = usePollerStatus();
+  const { mutate: startPoller, isPending: isStarting } = useStartPoller();
+  const { mutate: stopPoller, isPending: isStopping } = useStopPoller();
+  const { data: logLines = [] } = usePollerLogs(true);
 
   const [form, setForm] = useState<Partial<AppConfig>>({});
   const [saved, setSaved] = useState(false);
@@ -182,6 +213,116 @@ export function Settings() {
               )}
             />
           </SettingRow>
+        </div>
+      </section>
+
+      {/* Poller section */}
+      <section>
+        <div className="mb-3">
+          <h2 className="text-base font-semibold text-foreground">Poller</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Polls the M365 mailbox for new claim emails on each interval.
+          </p>
+        </div>
+
+        {/* Process control */}
+        <div className="rounded-lg border border-border bg-card px-4">
+          <div className="flex items-center justify-between gap-4 py-4">
+            <div className="flex items-center gap-2.5">
+              <span
+                className={cn(
+                  "inline-block h-2.5 w-2.5 rounded-full",
+                  pollerProcess?.running ? "bg-green-500" : "bg-zinc-500"
+                )}
+              />
+              <span className="text-sm font-medium text-foreground">
+                {pollerProcess?.running
+                  ? `Running${pollerProcess.pid ? ` · PID ${pollerProcess.pid}` : ""}`
+                  : "Stopped"}
+              </span>
+            </div>
+            {pollerProcess?.running ? (
+              <button
+                onClick={() => stopPoller()}
+                disabled={isStopping}
+                className={cn(
+                  "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                  "bg-red-600/15 text-red-400 ring-1 ring-red-600/30 hover:bg-red-600/25",
+                  "disabled:cursor-not-allowed disabled:opacity-50"
+                )}
+              >
+                {isStopping ? "Stopping…" : "Stop"}
+              </button>
+            ) : (
+              <button
+                onClick={() => startPoller()}
+                disabled={isStarting}
+                className={cn(
+                  "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                  "bg-green-600/15 text-green-400 ring-1 ring-green-600/30 hover:bg-green-600/25",
+                  "disabled:cursor-not-allowed disabled:opacity-50"
+                )}
+              >
+                {isStarting ? "Starting…" : "Start"}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* DB heartbeat status */}
+        <div className="rounded-lg border border-border bg-card px-4 mt-3">
+          <InfoRow
+            label="Poll status"
+            value={<PollerStatusBadge status={config?.poller_status ?? null} />}
+          />
+          <InfoRow
+            label="Last heartbeat"
+            value={
+              config?.last_heartbeat
+                ? new Date(config.last_heartbeat).toLocaleString(undefined, {
+                    dateStyle: "short",
+                    timeStyle: "medium",
+                  })
+                : null
+            }
+          />
+          <InfoRow
+            label="Last run"
+            value={
+              config?.last_run_at
+                ? new Date(config.last_run_at).toLocaleString(undefined, {
+                    dateStyle: "short",
+                    timeStyle: "medium",
+                  })
+                : null
+            }
+          />
+          {config?.last_error && (
+            <InfoRow
+              label="Last error"
+              value={
+                <span className="text-red-400 font-mono text-xs">
+                  {config.last_error}
+                </span>
+              }
+            />
+          )}
+        </div>
+
+        {/* Log viewer */}
+        <div className="mt-3">
+          <p className="text-xs text-muted-foreground mb-1.5">
+            Log output — last 200 lines, refreshes every 5s
+          </p>
+          <pre className={cn(
+            "h-64 overflow-y-auto rounded-lg border border-border bg-zinc-950",
+            "px-3 py-2.5 text-[11px] leading-relaxed font-mono text-zinc-300",
+            "whitespace-pre-wrap break-all"
+          )}>
+            {logLines.length === 0
+              ? <span className="text-zinc-600">No log output yet. Start the poller to see activity.</span>
+              : logLines.join("\n")}
+          </pre>
         </div>
       </section>
 

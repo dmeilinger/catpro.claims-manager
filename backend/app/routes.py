@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, contains_eager, joinedload
 from app.config import Settings, get_settings
 from app.database import get_db
 from app.models import AppConfig, ClaimData, ProcessedEmail
+from app import poller_manager
 from app.schemas import (
     AppConfigSchema,
     AppConfigUpdate,
@@ -21,6 +22,8 @@ from app.schemas import (
     ClaimSummary,
     ClaimTrends,
     HealthResponse,
+    PollerLogsResponse,
+    PollerProcessStatus,
     TrendPoint,
 )
 
@@ -273,10 +276,14 @@ def get_trends(
 
 @router.get("/health", response_model=HealthResponse)
 def health_check(session: SessionDep, settings: SettingsDep):
-    """System health check — poller recency + recent error rate."""
+    """System health check — poller heartbeat recency + recent error rate."""
     last_processed = session.scalar(
         select(func.max(ProcessedEmail.processed_at))
     )
+
+    # Use poller heartbeat to determine if the poller is alive
+    cfg = _get_or_create_config(session)
+    last_heartbeat = cfg.last_heartbeat
 
     # Recent error rate (last hour)
     hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
@@ -291,18 +298,18 @@ def health_check(session: SessionDep, settings: SettingsDep):
     ) or 0
     error_rate = round(recent_errors / recent_total, 4) if recent_total > 0 else None
 
-    # Determine status
-    health_status = "ok"
-    if last_processed:
+    # Health is based on heartbeat recency, not last processed claim
+    health_status = "unknown"
+    if last_heartbeat:
         try:
-            last_dt = datetime.fromisoformat(last_processed)
-            age = datetime.now(timezone.utc) - last_dt
-            if age > timedelta(seconds=settings.poll_interval_seconds * 2):
+            hb_dt = datetime.fromisoformat(last_heartbeat)
+            age = datetime.now(timezone.utc) - hb_dt
+            if age <= timedelta(seconds=settings.poll_interval_seconds * 2):
+                health_status = "ok"
+            else:
                 health_status = "degraded"
         except ValueError:
             health_status = "unknown"
-    else:
-        health_status = "unknown"
 
     if error_rate is not None and error_rate > 0.5:
         health_status = "degraded"
@@ -322,6 +329,7 @@ def _get_or_create_config(session: Session) -> AppConfig:
         cfg = AppConfig(
             id=1, dry_run=False, test_mode=False,
             test_adjuster_id="342436", test_branch_id="2529",
+            poller_enabled=True,
         )
         session.add(cfg)
         session.commit()
@@ -347,3 +355,29 @@ def update_config(body: AppConfigUpdate, session: SessionDep):
     session.commit()
     session.refresh(cfg)
     return cfg
+
+
+@router.get("/poller/status", response_model=PollerProcessStatus)
+def get_poller_status():
+    """Return whether the poller subprocess is currently running."""
+    return PollerProcessStatus(running=poller_manager.is_running(), pid=poller_manager.get_pid())
+
+
+@router.post("/poller/start", response_model=PollerProcessStatus)
+def start_poller():
+    """Spawn the poller subprocess if not already running."""
+    poller_manager.start()
+    return PollerProcessStatus(running=poller_manager.is_running(), pid=poller_manager.get_pid())
+
+
+@router.post("/poller/stop", response_model=PollerProcessStatus)
+def stop_poller():
+    """Terminate the poller subprocess."""
+    poller_manager.stop()
+    return PollerProcessStatus(running=poller_manager.is_running(), pid=poller_manager.get_pid())
+
+
+@router.get("/poller/logs", response_model=PollerLogsResponse)
+def get_poller_logs(lines: int = Query(200, ge=1, le=1000)):
+    """Return the last N lines from the poller log file."""
+    return PollerLogsResponse(lines=poller_manager.read_logs(lines))
