@@ -202,5 +202,65 @@ class ClaimDatabase:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_app_config(self) -> dict:
+        """Return submit_claim kwargs from the singleton app_config row."""
+        defaults = {
+            "dry_run": False,
+            "test_mode": False,
+            "test_adjuster_id": "342436",
+            "test_branch_id": "2529",
+        }
+        try:
+            row = self._conn.execute(
+                "SELECT dry_run, test_mode, test_adjuster_id, test_branch_id "
+                "FROM app_config WHERE id = 1"
+            ).fetchone()
+        except Exception:
+            return defaults
+        if row is None:
+            return defaults
+        return {
+            "dry_run": bool(row["dry_run"]),
+            "test_mode": bool(row["test_mode"]),
+            "test_adjuster_id": row["test_adjuster_id"] or defaults["test_adjuster_id"],
+            "test_branch_id": row["test_branch_id"] or defaults["test_branch_id"],
+        }
+
+    def is_poller_enabled(self) -> bool:
+        """Return the poller_enabled flag. Defaults to True if column is absent."""
+        try:
+            row = self._conn.execute(
+                "SELECT poller_enabled FROM app_config WHERE id = 1"
+            ).fetchone()
+            if row is None:
+                return True
+            return bool(row["poller_enabled"])
+        except Exception:
+            return True
+
+    def update_poller_heartbeat(self, status: str) -> None:
+        """Update poller_status and last_heartbeat timestamp."""
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            self._conn.execute(
+                "UPDATE app_config SET poller_status=?, last_heartbeat=? WHERE id=1",
+                (status, now),
+            )
+            self._conn.commit()
+        except Exception:
+            pass  # Non-fatal — don't crash the poller over a status write
+
+    def update_poller_run_result(self, error: str | None) -> None:
+        """Update last_run_at and last_error after a poll cycle completes."""
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            self._conn.execute(
+                "UPDATE app_config SET last_run_at=?, last_error=? WHERE id=1",
+                (now, error),
+            )
+            self._conn.commit()
+        except Exception:
+            pass
+
     def close(self) -> None:
         self._conn.close()

@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+/**
+ * Brand accent tokens — single source of truth for the app's accent colour.
+ * Change these two values to retheme all headers, badges, and table heads.
+ *   bg-brand/15       — subtle tinted background (card headers, table heads)
+ *   border-brand/30   — accent border
+ *   text-brand-fg     — accent foreground text
+ */
+@theme {
+  --color-brand: oklch(72.3% 0.219 149.6);    /* green-500 — tint base */
+  --color-brand-fg: oklch(79.2% 0.209 151.7); /* green-400 — readable text on tints */
+}
+
+@layer base {
+  :root {
+    /* Cursor-style dark theme */
+    --background: 0 0% 7%;
+    --foreground: 0 0% 88%;
+
+    --card: 0 0% 10%;
+    --card-foreground: 0 0% 88%;
+
+    --primary: 142 71% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 0 0% 15%;
+    --secondary-foreground: 0 0% 88%;
+
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 55%;
+
+    --accent: 0 0% 13%;
+    --accent-foreground: 0 0% 88%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 18%;
+    --input: 0 0% 15%;
+    --ring: 142 71% 45%;
+
+    --success: 142 71% 45%;
+    --warning: 38 92% 50%;
+    --info: 217 91% 60%;
+
+    --popover: 0 0% 10%;
+    --popover-foreground: 0 0% 88%;
+
+    --radius: 0.5rem;
+  }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    margin: 0;
+  }
+}

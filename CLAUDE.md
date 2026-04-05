@@ -154,11 +154,44 @@ M365_MAILBOX=claims-test@catpro.us.com
 POLL_INTERVAL_SECONDS=60
 DB_PATH=data/claims.db
 DRY_RUN=true
+TEST_MODE=true
+TEST_ADJUSTER_ID=342436
+TEST_BRANCH_ID=2529
 ```
 
 ### DRY_RUN mode
 
 `DRY_RUN=true` runs the full pipeline (poll, parse, extract, auth, CSRF, resolve IDs) but skips the final `POST claimSave.asp`. No billable claim created. All extracted data and the would-be payload are still saved to SQLite. Set `DRY_RUN=false` for production.
+
+### TEST_MODE
+
+`TEST_MODE=true` overrides resolved FileTrac IDs with test account values before payload construction. This is **separate from DRY_RUN** — they can be combined:
+
+| | DRY_RUN=false | DRY_RUN=true |
+|---|---|---|
+| **TEST_MODE=false** | Production: real IDs, real claim | Preview: real IDs, no POST |
+| **TEST_MODE=true** | Test claim: Bob TEST adjuster + TEST branch, claim created | Dev mode: test IDs, no POST |
+
+Test account defaults (override in `.env`):
+- `TEST_ADJUSTER_ID=342436` — Bob TEST (FileTrac Personnel Manager)
+- `TEST_BRANCH_ID=2529` — TEST branch
+
+For development, always use `DRY_RUN=true` + `TEST_MODE=true`.
+
+## Local Dev Routing (Caddy)
+
+Caddy runs as a local reverse proxy for `*.loc` domains. Config: `/opt/homebrew/etc/Caddyfile`
+
+```
+http://catpro.loc {
+    reverse_proxy /api/* localhost:8175   # FastAPI
+    reverse_proxy localhost:5175          # Vite dev server
+}
+```
+
+Reload after changes: `caddy reload --config /opt/homebrew/etc/Caddyfile`
+DNS for `.loc` is handled by a local resolver (not `/etc/hosts`).
+Vite must have `allowedHosts: ['catpro.loc']` in `vite.config.ts` or Caddy proxying will 403.
 
 ## Future: FastAPI + Docker
 
