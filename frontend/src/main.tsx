@@ -1,12 +1,14 @@
 import { StrictMode, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, RouterProvider, Navigate } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Claims } from "@/pages/Claims";
-import { Settings } from "@/pages/Settings";
+import { AdminSettings } from "@/pages/admin/Settings";
+import { Polling } from "@/pages/admin/Polling";
+import { Testing } from "@/pages/admin/Testing";
 import "./index.css";
 
 // Dashboard brings in Recharts (~500 kB) — lazy-load so it splits into its own chunk
@@ -28,7 +30,17 @@ const router = createBrowserRouter([
         ),
       },
       { path: "claims", element: <Claims /> },
-      { path: "settings", element: <Settings /> },
+      // Legacy redirect
+      { path: "settings", element: <Navigate to="/admin/settings" replace /> },
+      {
+        path: "admin",
+        children: [
+          { index: true, element: <Navigate to="/admin/settings" replace /> },
+          { path: "settings", element: <AdminSettings /> },
+          { path: "polling", element: <Polling /> },
+          { path: "testing", element: <Testing /> },
+        ],
+      },
       {
         path: "health",
         element: (

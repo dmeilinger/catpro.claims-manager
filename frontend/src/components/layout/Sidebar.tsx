@@ -1,5 +1,14 @@
 import { NavLink } from "react-router-dom";
-import { LayoutDashboard, FileText, Settings, Activity, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  LayoutDashboard,
+  FileText,
+  Settings,
+  Activity,
+  Radio,
+  FlaskConical,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface SidebarProps {
@@ -12,8 +21,10 @@ const navItems = [
   { to: "/claims", icon: FileText, label: "Claims" },
 ];
 
-const settingsItems = [
-  { to: "/settings", icon: Settings, label: "Settings" },
+const adminItems = [
+  { to: "/admin/settings", icon: Settings, label: "Settings" },
+  { to: "/admin/polling", icon: Radio, label: "Polling" },
+  { to: "/admin/testing", icon: FlaskConical, label: "Testing" },
 ];
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
@@ -60,14 +71,14 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           </NavLink>
         ))}
 
-        {/* Settings section */}
+        {/* Admin section */}
         <div className="pt-4">
           {!collapsed && (
             <p className="px-2.5 pb-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              Settings
+              Admin
             </p>
           )}
-          {settingsItems.map(({ to, icon: Icon, label }) => (
+          {adminItems.map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}
               to={to}

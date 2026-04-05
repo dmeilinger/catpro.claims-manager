@@ -5,6 +5,8 @@ __pycache__/
 .obsidian/
 *.eml
 data/*.db
+data/*.db-shm
+data/*.db-wal
 logs/*.log
 *.egg-info/
 .claude/settings.local.json
