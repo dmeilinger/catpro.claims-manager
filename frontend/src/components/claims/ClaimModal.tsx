@@ -11,8 +11,8 @@ interface ClaimModalProps {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="rounded-lg border border-border overflow-hidden">
-      <div className="px-3 py-2 bg-primary/8 border-b border-primary/20">
-        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-primary/70">
+      <div className="px-3 py-2 bg-green-500/15 border-b border-green-500/30">
+        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-green-400">
           {title}
         </h4>
       </div>
@@ -228,8 +228,8 @@ export function ClaimModal({ claimId, onClose }: ClaimModalProps) {
               {claim.submission_payload && (
                 <div className="col-span-full rounded-lg border border-border overflow-hidden">
                   <details className="group">
-                    <summary className="flex items-center gap-2 px-3 py-2 bg-primary/8 border-b border-primary/20 cursor-pointer hover:bg-primary/12 transition-colors list-none">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-primary/70">
+                    <summary className="flex items-center gap-2 px-3 py-2 bg-green-500/15 border-b border-green-500/30 cursor-pointer hover:bg-green-500/20 transition-colors list-none">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-green-400">
                         ▶ Submission Payload
                       </span>
                     </summary>
