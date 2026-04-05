@@ -130,51 +130,49 @@ Parses `ACmgrID` select from `claimAdd.asp` HTML. Skips placeholder values: `-1`
 
 ## Phase 2: MS O365 Email Polling
 
-Automatic mailbox polling replaces manual `.eml` file input.
+Automatic mailbox polling via MS Graph API. The poller runs as a managed subprocess under the FastAPI backend (see Phase 3).
 
-### Architecture
+### Email Source Abstraction (`backend/app/services/email_source.py`)
 
-```
-GraphMailSource (email_source.py)
-    │  MS Graph API — client credentials flow (msal)
-    │  GET /users/{mailbox}/messages?$filter=isRead eq false
-    │  $expand=attachments (inline base64 PDF bytes)
-    ▼
-EmailMessage(NamedTuple)
-    │  Normalized: message_id, internet_message_id, subject,
-    │              sender, received_at, body_text, pdfs dict
-    ▼
-Poller (poller.py)
-    │  while True: poll_once() → sleep(interval)
-    │  Dedup via ClaimDatabase.is_duplicate()
-    │  Reuses single FileTrac session per cycle
-    ▼
-extract_claim_fields()  →  login()  →  submit_claim()
-    │  (unchanged from Phase 1)
-    ▼
-ClaimDatabase (db.py)
-    │  SQLite — insert_pending → mark_success(claim_id) / mark_error
-    ▼
-claims.db
+`EmailSource` is a `typing.Protocol`:
+
+```python
+def fetch_unread() -> tuple[list[EmailMessage], list[SkippedEmail]]: ...
+def mark_read(message_id: str) -> None: ...
 ```
 
-### Email Source Abstraction (`email_source.py`)
+**`EmailMessage`** (NamedTuple) — an email with PDF attachments, ready for claim processing:
+- `message_id` — Graph API message ID (used for API calls like mark_read)
+- `internet_message_id` — RFC 2822 Message-ID (stable dedup key)
+- `subject`, `sender`, `received_at`, `body_text`
+- `pdfs` — `dict[str, bytes]` keyed by doc type (`claim_summary`, `loss_notice`, `policy_summary`)
 
-`EmailSource` is a `typing.Protocol` with two methods:
-- `fetch_unread() -> list[EmailMessage]` — return unread messages with PDFs
-- `mark_read(message_id: str) -> None` — mark as read and move to "Processed" folder
+**`SkippedEmail`** (NamedTuple) — an unread email the poller cannot process:
+- Same identity fields as `EmailMessage` (no body/pdfs — not downloaded)
+- `reason` — human-readable explanation (e.g. `"no attachments"`, `"no PDF attachments (found: image.png (image/png))"`)
 
 Implementations:
+
 | Class | Use case |
 |-------|----------|
-| `EmlFileSource` | CLI / testing — wraps existing `parse_eml()` |
+| `EmlFileSource` | CLI / testing — wraps a local `.eml` file |
 | `GraphMailSource` | Production — polls M365 shared mailbox via Graph API |
 
-This enables future webhook triggers: a webhook handler constructs `EmailMessage` directly and calls `_process_message()` — no new source class needed.
+### Graph API Query
+
+```
+GET /users/{mailbox}/messages
+    ?$filter=isRead eq false
+    &$expand=attachments
+    &$select=id,internetMessageId,subject,from,receivedDateTime,body,hasAttachments
+    &$top=10
+```
+
+All unread messages are fetched (no server-side attachment filter) so the poller can log and record a reason for every email it skips. Graph still does the `isRead eq false` filter server-side — the poller never sees read messages or the full mailbox history. `$top=10` caps each request.
 
 ### Graph API Authentication
 
-CatPro is a separate M365 tenant. Uses `msal.ConfidentialClientApplication` with client credentials flow (application permissions, no user interaction).
+CatPro is a separate M365 tenant. Uses `msal.ConfidentialClientApplication` with **client credentials flow** (application permissions, no user interaction).
 
 **Azure AD prerequisites** (manual setup in CatPro tenant):
 1. Register application → tenant ID + client ID
@@ -183,78 +181,22 @@ CatPro is a separate M365 tenant. Uses `msal.ConfidentialClientApplication` with
 4. Create client secret → store in `.env`
 5. (Recommended) Application access policy to restrict to shared mailbox only
 
-### SQLite Tracking (`db.py`)
+### Non-Claim Email Handling
 
-Two tables: `processed_emails` tracks email processing status, `claim_data` captures all extracted fields and the submission payload.
+This mailbox is **shared between the poller and humans**. Customers send claim PDFs but also follow-up questions and status inquiries. The poller must leave all non-claim emails completely untouched.
 
-```sql
-CREATE TABLE processed_emails (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    message_id          TEXT NOT NULL,      -- Graph API message ID (for API calls)
-    internet_message_id TEXT NOT NULL,      -- RFC 2822 Message-ID (dedup key)
-    subject             TEXT,
-    sender              TEXT,
-    received_at         TEXT,
-    processed_at        TEXT NOT NULL,
-    claim_id            TEXT,              -- FileTrac claim ID (e.g. "claimID=1234567") or "DRY_RUN"
-    status              TEXT NOT NULL,     -- pending | success | error
-    error_message       TEXT,
-    UNIQUE(internet_message_id)
-);
+| Email type | Poller action |
+|---|---|
+| Has PDF attachments | Process → mark read → move to "Processed" folder |
+| No attachments | Record as `skipped` in DB (first time only), leave untouched in inbox |
+| Has attachments, no PDFs | Record as `skipped` in DB (first time only), leave untouched in inbox |
+| Has PDFs, processing fails | Leave unread in inbox for manual review; record as `error` in DB |
 
-CREATE TABLE claim_data (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-    email_id                INTEGER NOT NULL REFERENCES processed_emails(id),
-    -- All extracted fields from PDF/email parsing (mirrors ClaimData model)
-    insured_first_name      TEXT,
-    insured_last_name       TEXT,
-    ...                     -- 30 fields total (insured, loss, client, agent, policy)
-    -- Resolved FileTrac IDs
-    filetrac_company_id     TEXT,
-    filetrac_contact_id     TEXT,
-    filetrac_branch_id      TEXT,
-    filetrac_adjuster_id    TEXT,
-    filetrac_manager_id     TEXT,
-    filetrac_csrf_token     TEXT,
-    -- Full submission payload as JSON (~80 form fields)
-    submission_payload      TEXT,
-    created_at              TEXT NOT NULL
-);
-```
+Skip dedup: on every poll cycle, `poll_once()` checks `_is_duplicate(internet_message_id)` before logging or recording a skipped email. Each unique non-claim email is logged **exactly once** across the poller's lifetime (including restarts). Subsequent cycles are completely silent for already-seen emails.
 
-Crash-safe: `processed_emails` row inserted as `pending` before processing, updated to `success`/`error` after. `claim_data` row inserted on success with all extracted fields and the exact payload that would be (or was) POSTed to FileTrac.
+### Post-Processing (Claim Emails)
 
-### Configuration (`config.py`)
-
-Pydantic `Settings` class loads all config from `.env`:
-
-```
-# Azure AD (CatPro tenant)
-AZURE_TENANT_ID=<guid>
-AZURE_CLIENT_ID=<guid>
-AZURE_CLIENT_SECRET=<secret>
-M365_MAILBOX=claims-test@catpro.us.com
-
-# Polling
-POLL_INTERVAL_SECONDS=60
-DB_PATH=data/claims.db
-
-# Dry run — skips billable POST, saves everything else to DB
-DRY_RUN=true
-```
-
-### Entry Points
-
-```bash
-python3.13 -m catpro.poller              # poll mailbox
-python3.13 -m catpro.process_claim email.eml  # process single EML file
-```
-
-Handles SIGTERM/SIGINT for clean Docker shutdown (1-second interruptible sleep).
-
-### Post-Processing
-
-- **Success**: email marked read and moved to **"Processed"** folder (auto-created)
+- **Success**: email marked read and moved to **"Processed"** folder (auto-created by Graph API)
 - **Failure**: email left unread in inbox for manual review; error recorded in DB
 
 ### Error Handling
@@ -264,28 +206,183 @@ Handles SIGTERM/SIGINT for clean Docker shutdown (1-second interruptible sleep).
 - **TOTP safety**: single FileTrac session reused across all messages in a poll cycle
 - **mark_read failure**: logged as warning, does not affect claim success status
 
-### DRY_RUN Mode
+## Phase 3: FastAPI + React Dashboard (Implemented)
 
-`DRY_RUN=true` runs the full pipeline (poll, parse, extract, authenticate, resolve IDs, build payload) but skips the final `POST claimSave.asp`. No billable claim is created in FileTrac. All data is still saved to `claim_data` — useful for validating the entire pipeline without cost.
+The poller runs as a managed subprocess under a FastAPI backend, with a React/Vite dashboard for monitoring and control.
 
-### Test Email Generator (`test_email.py`)
+### Architecture
 
-Sends real emails to the test mailbox via Graph API `sendMail` (from the FileTrac user account). Uses mock Acuity PDFs from `data/templates/sample_acuity_claim.eml` — all fictional data, no real PII.
-
-```bash
-python3.13 -m catpro.test_email --ref 0001 --adjuster "Doug"
+```
+┌─────────────────────────────────────────────────────────┐
+│  FastAPI (uvicorn, port 8175)                           │
+│                                                         │
+│  routes.py ──── REST API /api/v1/*                      │
+│  poller_manager.py ── subprocess lifecycle              │
+│       │                                                 │
+│       │  spawns                                         │
+│       ▼                                                 │
+│  scripts/poll.py → app.services.poller.Poller           │
+│       │  while True: poll_once() → _sleep()             │
+│       │  reads poll_interval_seconds from DB each sec   │
+│       ▼                                                 │
+│  app.services.email_source.GraphMailSource              │
+│       │  fetch_unread() → (messages, skipped)           │
+│       ▼                                                 │
+│  app.services.pdf_extractor + filetrac_submit           │
+│       │  extract → auth → submit                        │
+│       ▼                                                 │
+│  SQLite (data/claims.db) — WAL mode                     │
+│       processed_emails + claim_data + app_config        │
+└─────────────────────────────────────────────────────────┘
+         ▲
+         │  /api/v1/*  (Caddy → localhost:8175)
+         ▼
+┌─────────────────────────────────────────────────────────┐
+│  React/Vite dashboard (port 5175)                       │
+│  catpro.loc → Caddy → backend + frontend                │
+│                                                         │
+│  Dashboard — claims overview + trends                   │
+│  Claims    — table with search/filter/detail            │
+│  Admin: Settings / Polling / Testing                    │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## Phase 3: FastAPI Deployment (Planned)
+### Poller Subprocess Design (`backend/app/poller_manager.py`)
 
-Future deployment as a Docker container with FastAPI:
+The FastAPI process manages the poller as a child subprocess:
 
-- `Poller.poll_once()` wrapped in `asyncio.to_thread` as a background task
-- `POST /webhook` endpoint for MS Graph change notifications (replaces polling)
-- `GET /history` endpoint backed by `ClaimDatabase.get_history()`
-- `GET /health` endpoint
-- SQLite DB on a Docker volume (not ephemeral container filesystem)
-- Deployed via `uvicorn` in a `Dockerfile`
+- `start()` — kills any orphaned `scripts.poll` processes via `pgrep` (not just the PID file), then spawns `python3.13 -m scripts.poll` from `backend/` directory with a new session (`start_new_session=True`)
+- `stop()` — `SIGTERM` with 10s timeout, then `SIGKILL`
+- Logs to `logs/poller.log` (rotating, 10 MB × 5 backups)
+- PID tracked in `logs/poller.pid` (gitignored)
+- `_proc` is module-level — survives request/response cycles but resets on uvicorn restart (stale process cleanup handles orphans)
+
+The `pgrep`-based orphan kill is critical: if uvicorn is hard-killed (`kill <pid>`), the poller subprocess survives as an orphan with PPID=1. On next `start()`, `pgrep scripts.poll` finds and terminates all such orphans before spawning a fresh one.
+
+### SQLite Schema
+
+Managed by Alembic migrations (`backend/alembic/versions/`). Three tables:
+
+```sql
+-- Singleton runtime configuration (id always = 1)
+CREATE TABLE app_config (
+    id                    INTEGER PRIMARY KEY DEFAULT 1,
+    dry_run               BOOLEAN NOT NULL DEFAULT 0,
+    test_mode             BOOLEAN NOT NULL DEFAULT 0,
+    test_adjuster_id      TEXT DEFAULT '342436',
+    test_branch_id        TEXT DEFAULT '2529',
+    poller_enabled        BOOLEAN NOT NULL DEFAULT 1,
+    poll_interval_seconds INTEGER NOT NULL DEFAULT 60,  -- live config, read by poller each cycle
+    poller_status         TEXT,    -- 'idle' | 'running' | 'error' | 'disabled'
+    last_heartbeat        TEXT,    -- ISO 8601, updated every cycle
+    last_run_at           TEXT,    -- ISO 8601, updated after each poll_once()
+    last_error            TEXT,    -- last exception message, null on success
+    updated_at            TEXT     -- ISO 8601, set on every PUT /config
+);
+
+-- One row per email the poller has seen
+CREATE TABLE processed_emails (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id          TEXT NOT NULL,      -- Graph API message ID
+    internet_message_id TEXT NOT NULL UNIQUE, -- RFC 2822 Message-ID (dedup key)
+    subject             TEXT,
+    sender              TEXT,
+    received_at         TEXT,
+    processed_at        TEXT NOT NULL,
+    claim_id            TEXT,               -- "claimID=NNNNNNN" | "DRY_RUN" | null
+    status              TEXT NOT NULL,      -- pending | success | error | skipped
+    error_message       TEXT,               -- exception or skip reason
+    dry_run             BOOLEAN DEFAULT 0
+);
+
+-- One row per successfully extracted claim (joined to processed_emails)
+CREATE TABLE claim_data (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    email_id                INTEGER NOT NULL REFERENCES processed_emails(id),
+    -- Extracted fields (30 total: insured, loss, client, agent, policy)
+    insured_first_name TEXT, insured_last_name TEXT, ...
+    -- Resolved FileTrac IDs
+    filetrac_company_id TEXT, filetrac_contact_id TEXT, filetrac_branch_id TEXT,
+    filetrac_adjuster_id TEXT, filetrac_manager_id TEXT, filetrac_csrf_token TEXT,
+    -- Full submission payload as JSON (~80 form fields)
+    submission_payload  TEXT,
+    created_at          TEXT NOT NULL
+);
+```
+
+### Poll Interval — Live Configuration
+
+`poll_interval_seconds` is stored in `app_config` (default 60). The poller's sleep loop re-reads it from the DB **every second**:
+
+```python
+elapsed = 0
+while self._running:
+    interval = self._get_poll_interval()  # DB read each second
+    if elapsed >= interval:
+        break
+    time.sleep(1)
+    elapsed += 1
+```
+
+Changing the interval via `PUT /api/v1/config` takes effect within 1 second — no restart needed.
+
+### REST API
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/config` | Singleton `AppConfig` |
+| PUT | `/api/v1/config` | Partial update (`dry_run`, `test_mode`, `poll_interval_seconds`, `poller_enabled`, etc.) |
+| GET | `/api/v1/poller/status` | `{running: bool, pid: int\|null}` |
+| POST | `/api/v1/poller/start` | Spawn poller subprocess |
+| POST | `/api/v1/poller/stop` | Terminate poller |
+| GET | `/api/v1/poller/logs` | Last N lines from `logs/poller.log` |
+| DELETE | `/api/v1/poller/logs` | Truncate log file |
+| POST | `/api/v1/poller/send-test-email` | Send mock Acuity email to test mailbox |
+| GET | `/api/v1/claims` | Paginated claims with search, filter, inline stats |
+| GET | `/api/v1/claims/{id}` | Full claim detail (CSRF token + SSN fields redacted) |
+| GET | `/api/v1/claims/trends` | Daily volume for chart (last 30 days, zero-filled) |
+| GET | `/api/v1/health` | Heartbeat recency + recent error rate |
+
+### DRY_RUN and TEST_MODE
+
+Both stored in `app_config`, togglable via UI without restart:
+
+| | `DRY_RUN=false` | `DRY_RUN=true` |
+|---|---|---|
+| `TEST_MODE=false` | Production: real IDs, real claim created in FileTrac | Preview: real IDs resolved, no POST |
+| `TEST_MODE=true` | Test claim: Bob TEST adjuster + TEST branch, claim created | Dev: test IDs, no POST |
+
+### Local Dev Routing
+
+Caddy reverse proxy at `/opt/homebrew/etc/Caddyfile`:
+
+```
+http://catpro.loc {
+    reverse_proxy /api/* localhost:8175   # FastAPI
+    reverse_proxy localhost:5175          # Vite dev server
+}
+```
+
+Reload: `caddy reload --config /opt/homebrew/etc/Caddyfile`
+
+### Entry Points
+
+```bash
+# Backend (from backend/)
+python3.13 -m uvicorn app.main:app --port 8175 --host 127.0.0.1
+
+# Frontend (from frontend/)
+npm run dev
+
+# Poller (spawned by poller_manager, but also runnable directly from backend/)
+python3.13 -m scripts.poll
+
+# CLI — single EML file (still works, from repo root)
+python3.13 -m catpro.process_claim email.eml
+
+# Send test email (from backend/)
+python3.13 -m scripts.test_email --ref 0001 --adjuster "Doug"
+```
 
 ## Security
 
@@ -297,24 +394,67 @@ Future deployment as a Docker container with FastAPI:
 ## File Structure
 
 ```
-catpro/                     — Main Python package
+catpro/                         — Legacy standalone CLI package (Phase 1)
   __init__.py
-  process_claim.py          — Core pipeline: parse, extract, auth, submit (Phase 1)
-  email_source.py           — Email source abstraction: Protocol + EML + Graph API
-  db.py                     — SQLite tracking: processed_emails + claim_data tables
-  config.py                 — Pydantic settings from .env
-  poller.py                 — Polling loop + orchestration (Phase 2 entry point)
-  test_email.py             — Inject test emails into M365 mailbox
-  adjusters.json            — Adjuster name → FileTrac ID mapping
-data/                       — Runtime data (gitignored except .gitkeep)
-  claims.db                 — SQLite database (created at runtime)
+  process_claim.py              — Core pipeline: parse, extract, auth, submit
+  email_source.py               — EmailSource Protocol + EmlFileSource (CLI only)
+  db.py                         — Raw SQLite helpers (CLI only)
+  config.py                     — Pydantic settings from .env (CLI only)
+  test_email.py                 — Send test emails via Graph API (CLI)
+  adjusters.json                — Adjuster name → FileTrac ID mapping
+
+backend/                        — FastAPI application (Phase 3)
+  app/
+    main.py                     — FastAPI app, CORS middleware, router mount
+    routes.py                   — All REST endpoints (/api/v1/*)
+    models.py                   — SQLAlchemy ORM: AppConfig, ProcessedEmail, ClaimData
+    schemas.py                  — Pydantic request/response schemas
+    database.py                 — SQLite engine, WAL mode, SessionLocal, get_db
+    config.py                   — Pydantic Settings from .env (backend-specific)
+    poller_manager.py           — Poller subprocess lifecycle (start/stop/logs/pid)
+    services/
+      poller.py                 — THE canonical polling loop (entry: scripts.poll)
+      email_source.py           — EmailSource Protocol + EmlFileSource + GraphMailSource
+      eml_parser.py             — MIME parse: extract body + PDF attachments
+      pdf_extractor.py          — Acuity PDF parsing via pdfplumber
+      filetrac_auth.py          — Cognito SRP + TOTP + evolveLogin SSO
+      filetrac_submit.py        — Dynamic ID resolution + POST claimSave.asp
+      test_email.py             — Send test emails via Graph API (backend)
+  alembic/
+    versions/                   — Schema migrations (one file per change)
+  scripts/
+    poll.py                     — Entry point: python -m scripts.poll
+
+frontend/                       — React/Vite/TailwindCSS dashboard (Phase 3)
+  src/
+    pages/
+      Dashboard.tsx             — Claims overview + trend chart
+      Claims.tsx                — Paginated table with search/filter
+      admin/
+        Settings.tsx            — Dry run toggle
+        Polling.tsx             — Poller control, interval config, status, logs
+        Testing.tsx             — Send test emails
+    components/
+      admin/shared.tsx          — Toggle, SettingRow, InfoRow, PollerStatusBadge
+      claims/                   — ClaimsTable, ClaimModal
+      ui.tsx                    — SectionHeading, shared primitives
+    hooks/
+      useAppConfig.ts           — useAppConfig(), useUpdateAppConfig()
+      usePoller.ts              — usePollerStatus/Start/Stop/Logs/ClearLogs/SendTestEmail
+    schemas/claim.ts            — Zod schemas + inferred TypeScript types
+    lib/api.ts                  — Axios instance pointed at /api/v1
+
+data/                           — Runtime data (gitignored except .gitkeep)
+  claims.db                     — SQLite database (created at runtime)
   templates/
-    sample_acuity_claim.eml — Mock Acuity claim with fake data (for testing)
-requirements.txt            — Python dependencies
-.env                        — Credentials (gitignored)
+    sample_acuity_claim.eml     — Mock Acuity claim with fake data (for testing)
+
+logs/                           — Runtime logs (gitignored)
+  poller.log                    — Rotating poller log (10 MB × 5 backups)
+  poller.pid                    — Subprocess PID (gitignored)
+
+.env                            — All credentials (gitignored)
 docs/
-  product-requirements.md   — Business context and requirements
-  architecture.md           — This document
-  brainstorms/              — Early design notes (historical)
-  plans/                    — Implementation plans (historical)
+  product-requirements.md       — Business context and requirements
+  architecture.md               — This document
 ```
