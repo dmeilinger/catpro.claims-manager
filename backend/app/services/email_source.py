@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 log = logging.getLogger(__name__)
 
 
-# ── Shared data type ─────────────────────────────────────────────────────────
+# ── Shared data types ────────────────────────────────────────────────────────
 
 class EmailMessage(NamedTuple):
     """Normalized email data from any source."""
@@ -26,11 +26,22 @@ class EmailMessage(NamedTuple):
     pdfs: dict[str, bytes]  # {doc_type_or_filename: pdf_bytes}
 
 
+class SkippedEmail(NamedTuple):
+    """An unread email the poller saw but cannot process."""
+
+    message_id: str           # Graph message ID
+    internet_message_id: str  # RFC 2822 stable dedup key
+    subject: str
+    sender: str
+    received_at: str
+    reason: str               # human-readable explanation
+
+
 # ── Protocol ─────────────────────────────────────────────────────────────────
 
 class EmailSource(Protocol):
-    def fetch_unread(self) -> list[EmailMessage]:
-        """Return unread messages with PDF attachments."""
+    def fetch_unread(self) -> tuple[list[EmailMessage], list[SkippedEmail]]:
+        """Return (processable messages with PDFs, skipped messages with reasons)."""
         ...
 
     def mark_read(self, message_id: str) -> None:
@@ -59,9 +70,9 @@ class EmlFileSource:
         self._path = eml_path
         self._consumed = False
 
-    def fetch_unread(self) -> list[EmailMessage]:
+    def fetch_unread(self) -> tuple[list[EmailMessage], list[SkippedEmail]]:
         if self._consumed:
-            return []
+            return [], []
         self._consumed = True
 
         from app.services.eml_parser import parse_eml
@@ -77,7 +88,7 @@ class EmlFileSource:
                 body_text=body,
                 pdfs=pdfs,
             )
-        ]
+        ], []
 
     def mark_read(self, message_id: str) -> None:
         pass  # No-op for local files
@@ -133,57 +144,75 @@ class GraphMailSource:
         resp.raise_for_status()
         return resp
 
-    def fetch_unread(self) -> list[EmailMessage]:
-        """Fetch unread emails with PDF attachments from the shared mailbox."""
+    def fetch_unread(self) -> tuple[list[EmailMessage], list[SkippedEmail]]:
+        """Fetch all unread messages and categorize into processable vs. skipped."""
         url = (
             f"{self.GRAPH_BASE}/users/{self._mailbox}/messages"
-            f"?$filter=isRead eq false and hasAttachments eq true"
+            f"?$filter=isRead eq false"
             f"&$expand=attachments"
-            f"&$select=id,internetMessageId,subject,from,receivedDateTime,body"
+            f"&$select=id,internetMessageId,subject,from,receivedDateTime,body,hasAttachments"
             f"&$top=10"
         )
         resp = self._request("GET", url)
-        messages = []
+        raw = resp.json().get("value", [])
 
-        for msg in resp.json().get("value", []):
+        messages: list[EmailMessage] = []
+        skipped: list[SkippedEmail] = []
+
+        for msg in raw:
+            subject = msg.get("subject", "(no subject)")
+            sender = msg.get("from", {}).get("emailAddress", {}).get("address", "unknown")
+            received_at = msg.get("receivedDateTime", "")
+            internet_message_id = msg.get("internetMessageId", "")
+            attachments = msg.get("attachments", [])
+
+            if not attachments:
+                skipped.append(SkippedEmail(
+                    message_id=msg["id"],
+                    internet_message_id=internet_message_id,
+                    subject=subject,
+                    sender=sender,
+                    received_at=received_at,
+                    reason="no attachments",
+                ))
+                continue
+
             pdfs: dict[str, bytes] = {}
-            for att in msg.get("attachments", []):
-                if (
-                    att.get("contentType") == "application/pdf"
-                    and att.get("contentBytes")
-                ):
+            for att in attachments:
+                if att.get("contentType") == "application/pdf" and att.get("contentBytes"):
                     pdf_bytes = base64.b64decode(att["contentBytes"])
                     pdfs[_classify_pdf(att.get("name", "attachment.pdf"))] = pdf_bytes
 
             if not pdfs:
-                continue  # Skip emails without PDF attachments
+                attachment_summary = ", ".join(
+                    f"{att.get('name', '?')} ({att.get('contentType', '?')})"
+                    for att in attachments
+                )
+                skipped.append(SkippedEmail(
+                    message_id=msg["id"],
+                    internet_message_id=internet_message_id,
+                    subject=subject,
+                    sender=sender,
+                    received_at=received_at,
+                    reason=f"no PDF attachments (found: {attachment_summary})",
+                ))
+                continue
 
             body_text = msg.get("body", {}).get("content", "")
             if msg.get("body", {}).get("contentType") == "html":
-                body_text = BeautifulSoup(body_text, "html.parser").get_text(
-                    separator="\n"
-                )
+                body_text = BeautifulSoup(body_text, "html.parser").get_text(separator="\n")
 
-            messages.append(
-                EmailMessage(
-                    message_id=msg["id"],
-                    internet_message_id=msg.get("internetMessageId", ""),
-                    subject=msg.get("subject", ""),
-                    sender=(
-                        msg.get("from", {})
-                        .get("emailAddress", {})
-                        .get("address", "")
-                    ),
-                    received_at=msg.get("receivedDateTime", ""),
-                    body_text=body_text,
-                    pdfs=pdfs,
-                )
-            )
+            messages.append(EmailMessage(
+                message_id=msg["id"],
+                internet_message_id=internet_message_id,
+                subject=subject,
+                sender=sender,
+                received_at=received_at,
+                body_text=body_text,
+                pdfs=pdfs,
+            ))
 
-        log.info(
-            "Fetched %d message(s) with PDFs from %s", len(messages), self._mailbox
-        )
-        return messages
+        return messages, skipped
 
     def _ensure_folder(self, folder_name: str) -> str:
         """Get or create a mail folder. Returns the folder ID."""

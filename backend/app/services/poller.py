@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import AppConfig, ClaimData as ClaimDataRow, ProcessedEmail
-from app.services.email_source import EmailMessage, GraphMailSource
+from app.services.email_source import EmailMessage, GraphMailSource, SkippedEmail
 from app.services.filetrac_auth import build_session, login
 from app.services.filetrac_submit import submit_claim
 from app.services.pdf_extractor import extract_claim_fields
@@ -102,6 +102,26 @@ class Poller:
                 row.claim_id = claim_id
                 row.processed_at = _now()
                 db.commit()
+
+    def _insert_skipped(self, item: SkippedEmail) -> None:
+        """Record a skipped email in the DB so it isn't logged again next cycle."""
+        with SessionLocal() as db:
+            row = ProcessedEmail(
+                message_id=item.message_id,
+                internet_message_id=item.internet_message_id,
+                subject=item.subject,
+                sender=item.sender,
+                received_at=item.received_at,
+                processed_at=_now(),
+                status="skipped",
+                error_message=item.reason,
+                dry_run=False,
+            )
+            db.add(row)
+            try:
+                db.commit()
+            except Exception:
+                pass  # Already inserted by a concurrent cycle
 
     def _mark_error(self, row_id: int, error_message: str) -> None:
         with SessionLocal() as db:
@@ -192,7 +212,17 @@ class Poller:
 
     def poll_once(self) -> None:
         """Single poll iteration: fetch unread → skip duplicates → process → update DB."""
-        messages = self._source.fetch_unread()
+        messages, skipped = self._source.fetch_unread()
+
+        # Log and record newly-seen non-claim emails (once per email, permanently)
+        for item in skipped:
+            if self._is_duplicate(item.internet_message_id):
+                continue
+            log.info(
+                "Skipping %r from %s — %s", item.subject, item.sender, item.reason
+            )
+            self._insert_skipped(item)
+
         if not messages:
             return
 
