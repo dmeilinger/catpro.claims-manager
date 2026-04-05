@@ -25,7 +25,7 @@ import requests as http_requests
 
 from app.config import get_settings
 from app.services.email_source import GraphMailSource
-from app.services.claim_processor import parse_eml
+from app.services.eml_parser import parse_eml
 
 log = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ def inject_test_email(
     source = GraphMailSource(
         tenant_id=settings.azure_tenant_id,
         client_id=settings.azure_client_id,
-        client_secret=settings.azure_client_secret,
+        client_secret=settings.azure_client_secret.get_secret_value(),
         mailbox=settings.m365_mailbox,
     )
     token = source._get_token()

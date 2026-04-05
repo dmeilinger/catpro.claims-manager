@@ -24,6 +24,7 @@ from app.schemas import (
     HealthResponse,
     PollerLogsResponse,
     PollerProcessStatus,
+    TestEmailRequest,
     TrendPoint,
 )
 
@@ -381,3 +382,24 @@ def stop_poller():
 def get_poller_logs(lines: int = Query(200, ge=1, le=1000)):
     """Return the last N lines from the poller log file."""
     return PollerLogsResponse(lines=poller_manager.read_logs(lines))
+
+
+@router.delete("/poller/logs", status_code=204)
+def clear_poller_logs():
+    """Truncate the poller log file."""
+    poller_manager.clear_logs()
+
+
+@router.post("/poller/send-test-email")
+def send_test_email(body: TestEmailRequest):
+    """Send a test claim email to the configured mailbox."""
+    from pathlib import Path
+    from app.services.test_email import inject_test_email
+    # EML lives at repo_root/data/templates/ — resolve from this file's location
+    repo_root = Path(__file__).resolve().parents[2]
+    eml_path = str(repo_root / "data" / "templates" / "sample_acuity_claim.eml")
+    try:
+        inject_test_email(eml_path=eml_path, ref=body.ref, adjuster=body.adjuster, subject=body.subject or None)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"status": "sent", "ref": body.ref, "adjuster": body.adjuster}

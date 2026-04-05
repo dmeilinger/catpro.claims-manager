@@ -1,29 +1,55 @@
 import { useState, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { ClaimsTable } from "@/components/claims/ClaimsTable";
 import { ClaimModal } from "@/components/claims/ClaimModal";
 import { useClaims } from "@/hooks/useClaims";
 
 export function Claims() {
-  const [filters, setFilters] = useState({
-    status: null as string | null,
-    search: "",
-  });
-  const [page, setPage] = useState(1);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedClaimId, setSelectedClaimId] = useState<number | null>(null);
+
+  const status = searchParams.get("status");
+  const search = searchParams.get("search") ?? "";
+  const page = Number(searchParams.get("page") ?? 1);
 
   const { data, isLoading } = useClaims({
     page,
     page_size: 25,
-    status: filters.status,
-    search: filters.search || undefined,
+    status,
+    search: search || undefined,
   });
 
   const handleFilterChange = useCallback(
     (updates: { status?: string | null; search?: string }) => {
-      setFilters((prev) => ({ ...prev, ...updates }));
-      setPage(1);
+      setSearchParams(
+        (prev) => {
+          for (const [k, v] of Object.entries(updates)) {
+            if (v == null || v === "") {
+              prev.delete(k);
+            } else {
+              prev.set(k, v);
+            }
+          }
+          prev.set("page", "1");
+          return prev;
+        },
+        { replace: true }
+      );
     },
-    []
+    [setSearchParams]
+  );
+
+  const handlePageChange = useCallback(
+    (newPage: number) => {
+      setSearchParams(
+        (prev) => {
+          prev.set("page", String(newPage));
+          return prev;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
   );
 
   return (
@@ -34,9 +60,9 @@ export function Claims() {
         page={page}
         pageSize={25}
         isLoading={isLoading}
-        filters={filters}
+        filters={{ status, search }}
         onFilterChange={handleFilterChange}
-        onPageChange={setPage}
+        onPageChange={handlePageChange}
         onRowClick={setSelectedClaimId}
         selectedId={selectedClaimId}
       />

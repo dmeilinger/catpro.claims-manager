@@ -182,3 +182,9 @@ class PollerProcessStatus(BaseModel):
 
 class PollerLogsResponse(BaseModel):
     lines: list[str]
+
+
+class TestEmailRequest(BaseModel):
+    ref: str = "9999"
+    adjuster: str = "Alan"
+    subject: str | None = None

@@ -54,3 +54,30 @@ export function usePollerLogs(enabled: boolean) {
     enabled,
   });
 }
+
+export function useClearPollerLogs() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      await apiClient.delete("/poller/logs");
+    },
+    onSuccess: () => {
+      queryClient.setQueryData(["poller-logs"], []);
+    },
+  });
+}
+
+export interface TestEmailParams {
+  ref: string;
+  adjuster: string;
+  subject: string;
+}
+
+export function useSendTestEmail() {
+  return useMutation({
+    mutationFn: async (params: TestEmailParams) => {
+      const { data } = await apiClient.post("/poller/send-test-email", params);
+      return data as { status: string; ref: string };
+    },
+  });
+}

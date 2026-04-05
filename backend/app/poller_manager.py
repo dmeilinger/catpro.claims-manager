@@ -2,17 +2,34 @@
 
 import logging
 import logging.handlers
+import os
+import signal
 import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent.parent
+BACKEND_DIR = REPO_ROOT / "backend"
 LOGS_DIR = REPO_ROOT / "logs"
 LOG_PATH = LOGS_DIR / "poller.log"
+PID_FILE = LOGS_DIR / "poller.pid"
 
 _venv_python = REPO_ROOT / ".venv" / "bin" / "python3.13"
 PYTHON = str(_venv_python) if _venv_python.exists() else "python3.13"
 
 _proc: subprocess.Popen | None = None
+
+
+def _kill_stale_poller() -> None:
+    """Kill any poller subprocess left over from a previous FastAPI instance."""
+    if not PID_FILE.exists():
+        return
+    try:
+        pid = int(PID_FILE.read_text().strip())
+        os.kill(pid, signal.SIGTERM)
+    except (ValueError, ProcessLookupError, PermissionError):
+        pass
+    finally:
+        PID_FILE.unlink(missing_ok=True)
 
 
 def _open_log_file():
@@ -36,14 +53,18 @@ def start() -> dict:
     global _proc
     if is_running():
         return {"started": False, "reason": "already_running", "pid": _proc.pid}
+    _kill_stale_poller()
     log_file = _open_log_file()
     _proc = subprocess.Popen(
-        [PYTHON, "-m", "catpro.poller"],
-        cwd=str(REPO_ROOT),
+        [PYTHON, "-m", "scripts.poll"],
+        cwd=str(BACKEND_DIR),
         stdout=log_file,
         stderr=subprocess.STDOUT,
+        start_new_session=True,
     )
     log_file.close()
+    LOGS_DIR.mkdir(exist_ok=True)
+    PID_FILE.write_text(str(_proc.pid))
     return {"started": True, "pid": _proc.pid}
 
 
@@ -58,6 +79,7 @@ def stop() -> dict:
         _proc.kill()
     pid = _proc.pid
     _proc = None
+    PID_FILE.unlink(missing_ok=True)
     return {"stopped": True, "pid": pid}
 
 
@@ -68,3 +90,9 @@ def read_logs(lines: int = 200) -> list[str]:
     with open(LOG_PATH) as f:
         all_lines = f.readlines()
     return [line.rstrip() for line in all_lines[-lines:]]
+
+
+def clear_logs() -> None:
+    """Truncate the poller log file."""
+    LOGS_DIR.mkdir(exist_ok=True)
+    LOG_PATH.write_text("")

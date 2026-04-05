@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAppConfig, useUpdateAppConfig } from "@/hooks/useAppConfig";
-import { usePollerStatus, useStartPoller, useStopPoller, usePollerLogs } from "@/hooks/usePoller";
+import { usePollerStatus, useStartPoller, useStopPoller, usePollerLogs, useClearPollerLogs, useSendTestEmail } from "@/hooks/usePoller";
 import { type AppConfig } from "@/schemas/claim";
 import { cn } from "@/lib/utils";
 
@@ -89,9 +89,12 @@ export function Settings() {
   const { mutate: startPoller, isPending: isStarting } = useStartPoller();
   const { mutate: stopPoller, isPending: isStopping } = useStopPoller();
   const { data: logLines = [] } = usePollerLogs(true);
+  const { mutate: clearLogs, isPending: isClearing } = useClearPollerLogs();
+  const { mutate: sendTestEmail, isPending: isSending, isSuccess: emailSent, isError: emailFailed, error: emailError } = useSendTestEmail();
 
   const [form, setForm] = useState<Partial<AppConfig>>({});
   const [saved, setSaved] = useState(false);
+  const [testForm, setTestForm] = useState({ ref: "9999", adjuster: "Alan", subject: "" });
 
   // Sync form with loaded config (only on first load)
   useEffect(() => {
@@ -311,9 +314,22 @@ export function Settings() {
 
         {/* Log viewer */}
         <div className="mt-3">
-          <p className="text-xs text-muted-foreground mb-1.5">
-            Log output — last 200 lines, refreshes every 5s
-          </p>
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="text-xs text-muted-foreground">
+              Log output — last 200 lines, refreshes every 5s
+            </p>
+            <button
+              onClick={() => clearLogs()}
+              disabled={isClearing || logLines.length === 0}
+              className={cn(
+                "rounded px-2 py-0.5 text-xs font-medium transition-colors",
+                "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800",
+                "disabled:cursor-not-allowed disabled:opacity-40"
+              )}
+            >
+              {isClearing ? "Clearing…" : "Clear"}
+            </button>
+          </div>
           <pre className={cn(
             "h-64 overflow-y-auto rounded-lg border border-border bg-zinc-950",
             "px-3 py-2.5 text-[11px] leading-relaxed font-mono text-zinc-300",
@@ -323,6 +339,73 @@ export function Settings() {
               ? <span className="text-zinc-600">No log output yet. Start the poller to see activity.</span>
               : logLines.join("\n")}
           </pre>
+        </div>
+      </section>
+
+      {/* Test Email section */}
+      <section>
+        <div className="mb-3">
+          <h2 className="text-base font-semibold text-foreground">Send Test Email</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Injects a mock Acuity claim email into the mailbox for end-to-end testing.
+          </p>
+        </div>
+        <div className="rounded-lg border border-border bg-card px-4">
+          <SettingRow label="Claim Ref" description="Reference number appended to TG (e.g. 9999 → TG9999).">
+            <input
+              type="text"
+              value={testForm.ref}
+              onChange={(e) => setTestForm((p) => ({ ...p, ref: e.target.value }))}
+              placeholder="9999"
+              className={cn(
+                "w-28 rounded-md border border-input bg-background px-2.5 py-1 text-sm text-foreground",
+                "focus:outline-none focus:ring-1 focus:ring-ring"
+              )}
+            />
+          </SettingRow>
+          <SettingRow label="Adjuster Name" description="Name used in the email salutation.">
+            <input
+              type="text"
+              value={testForm.adjuster}
+              onChange={(e) => setTestForm((p) => ({ ...p, adjuster: e.target.value }))}
+              placeholder="Alan"
+              className={cn(
+                "w-36 rounded-md border border-input bg-background px-2.5 py-1 text-sm text-foreground",
+                "focus:outline-none focus:ring-1 focus:ring-ring"
+              )}
+            />
+          </SettingRow>
+          <SettingRow label="Subject" description="Email subject — leave blank to use TG{ref}.">
+            <input
+              type="text"
+              value={testForm.subject}
+              onChange={(e) => setTestForm((p) => ({ ...p, subject: e.target.value }))}
+              placeholder={`TG${testForm.ref}`}
+              className={cn(
+                "w-48 rounded-md border border-input bg-background px-2.5 py-1 text-sm text-foreground",
+                "focus:outline-none focus:ring-1 focus:ring-ring"
+              )}
+            />
+          </SettingRow>
+        </div>
+        <div className="flex items-center gap-3 mt-3">
+          <button
+            onClick={() => sendTestEmail({ ...testForm, subject: testForm.subject || "" })}
+            disabled={isSending}
+            className={cn(
+              "rounded-md px-4 py-2 text-sm font-medium transition-colors",
+              "bg-blue-600/15 text-blue-400 ring-1 ring-blue-600/30 hover:bg-blue-600/25",
+              "disabled:cursor-not-allowed disabled:opacity-50"
+            )}
+          >
+            {isSending ? "Sending…" : "Send Test Email"}
+          </button>
+          {emailSent && <span className="text-xs text-green-500">Sent — check the mailbox.</span>}
+          {emailFailed && (
+            <span className="text-xs text-red-400">
+              {(emailError as Error)?.message ?? "Failed to send."}
+            </span>
+          )}
         </div>
       </section>
 

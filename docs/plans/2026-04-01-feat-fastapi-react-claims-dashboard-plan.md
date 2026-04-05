@@ -912,27 +912,27 @@ services:
 
 ### Functional
 
-- [ ] FastAPI serves all 5 endpoints with correct response schemas
-- [ ] SQLAlchemy models match existing SQLite schema + `dry_run` column
-- [ ] Alembic migration runs cleanly on fresh database
-- [ ] Service layer works for both API routes and CLI scripts
-- [ ] Dashboard shows summary cards with real data
-- [ ] Trend chart renders daily volume over last 30 days
-- [ ] Claims table is paginated, sortable, and filterable
-- [ ] Detail drawer shows full claim data with collapsible JSON payload
-- [ ] Status badges distinguish success, error, pending, and dry_run
-- [ ] Filters sync with URL params (bookmarkable)
-- [ ] Auto-refresh every 30s with "last updated" indicator
-- [ ] Health endpoint reports poller status
-- [ ] Empty and loading states render appropriately
-- [ ] Poller stores partial claim_data on errors
+- [x] FastAPI serves all 5 endpoints with correct response schemas
+- [x] SQLAlchemy models match existing SQLite schema + `dry_run` column
+- [x] Alembic migration runs cleanly on fresh database
+- [x] Service layer works for both API routes and CLI scripts
+- [x] Dashboard shows summary cards with real data
+- [x] Trend chart renders daily volume over last 30 days
+- [x] Claims table is paginated, sortable, and filterable
+- [x] Detail drawer shows full claim data with collapsible JSON payload
+- [x] Status badges distinguish success, error, pending, and dry_run
+- [x] Filters sync with URL params (bookmarkable)
+- [x] Auto-refresh every 30s with "last updated" indicator
+- [x] Health endpoint reports poller status
+- [x] Empty and loading states render appropriately
+- [x] Poller stores partial claim_data on errors
 
 ### Non-Functional
 
-- [ ] Dark theme matches Cursor aesthetic (ai-reporting reference)
-- [ ] API responses < 200ms for typical queries
-- [ ] Frontend loads in < 2s
-- [ ] No PII exposed without network-level access control (localhost binding)
+- [x] Dark theme matches Cursor aesthetic (ai-reporting reference)
+- [ ] API responses < 200ms for typical queries — **PARTIAL**: indexes present but complex JOIN + stats subquery unvalidated at scale
+- [ ] Frontend loads in < 2s — **PARTIAL**: no code splitting or lazy route loading configured in `vite.config.ts`
+- [x] No PII exposed without network-level access control (localhost binding)
 
 ## Dependencies & Risks
 

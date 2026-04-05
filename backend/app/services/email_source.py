@@ -64,7 +64,7 @@ class EmlFileSource:
             return []
         self._consumed = True
 
-        from app.services.claim_processor import parse_eml
+        from app.services.eml_parser import parse_eml
 
         body, pdfs = parse_eml(self._path)
         return [
