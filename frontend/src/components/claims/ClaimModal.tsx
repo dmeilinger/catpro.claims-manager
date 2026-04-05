@@ -10,11 +10,13 @@ interface ClaimModalProps {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div>
-      <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2 border-b border-border pb-1">
-        {title}
-      </h4>
-      <div className="space-y-1.5 text-sm">{children}</div>
+    <div className="rounded-lg border border-border overflow-hidden">
+      <div className="px-3 py-2 bg-muted/40 border-b border-border">
+        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {title}
+        </h4>
+      </div>
+      <div className="divide-y divide-border/60 text-sm">{children}</div>
     </div>
   );
 }
@@ -22,7 +24,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Field({ label, value }: { label: string; value: string | null | undefined }) {
   if (!value) return null;
   return (
-    <div className="flex justify-between gap-4">
+    <div className="flex justify-between gap-4 px-3 py-2.5">
       <span className="text-muted-foreground shrink-0">{label}</span>
       <span className="text-foreground text-right">{value}</span>
     </div>
@@ -112,7 +114,7 @@ export function ClaimModal({ claimId, onClose }: ClaimModalProps) {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Left column */}
-              <div className="space-y-5">
+              <div className="space-y-4">
                 {/* Overview */}
                 <Section title="Overview">
                   <Field label="Claim ID" value={claim.claim_id} />
@@ -175,7 +177,7 @@ export function ClaimModal({ claimId, onClose }: ClaimModalProps) {
               </div>
 
               {/* Right column */}
-              <div className="space-y-5">
+              <div className="space-y-4">
                 {/* Loss Info */}
                 {claim.claim_data && (
                   <Section title="Loss Info">
@@ -191,7 +193,7 @@ export function ClaimModal({ claimId, onClose }: ClaimModalProps) {
                       }
                     />
                     {claim.claim_data.loss_description && (
-                      <div>
+                      <div className="px-3 py-2.5">
                         <span className="text-muted-foreground text-sm">Description</span>
                         <p className="text-sm text-foreground mt-1 leading-relaxed">
                           {claim.claim_data.loss_description}
@@ -224,12 +226,14 @@ export function ClaimModal({ claimId, onClose }: ClaimModalProps) {
 
               {/* Full width: Submission Payload */}
               {claim.submission_payload && (
-                <div className="col-span-full">
+                <div className="col-span-full rounded-lg border border-border overflow-hidden">
                   <details className="group">
-                    <summary className="text-xs font-medium uppercase tracking-wider text-muted-foreground cursor-pointer hover:text-foreground">
-                      Submission Payload
+                    <summary className="flex items-center gap-2 px-3 py-2 bg-muted/40 border-b border-border cursor-pointer hover:bg-muted/60 transition-colors list-none">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        ▶ Submission Payload
+                      </span>
                     </summary>
-                    <pre className="mt-2 bg-background rounded-md p-3 text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto">
+                    <pre className="bg-background p-3 text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto">
                       {JSON.stringify(claim.submission_payload, null, 2)}
                     </pre>
                   </details>
