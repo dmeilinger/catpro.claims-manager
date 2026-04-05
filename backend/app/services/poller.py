@@ -61,6 +61,17 @@ class Poller:
                 "test_branch_id": row.test_branch_id or "2529",
             }
 
+    def _get_poll_interval(self) -> int:
+        """Read poll_interval_seconds from DB so changes apply without restart."""
+        try:
+            with SessionLocal() as db:
+                row = db.get(AppConfig, 1)
+                if row is not None:
+                    return row.poll_interval_seconds or 60
+        except Exception:
+            pass
+        return self._settings.poll_interval_seconds
+
     def _is_duplicate(self, internet_message_id: str) -> bool:
         with SessionLocal() as db:
             return db.query(ProcessedEmail).filter_by(
@@ -244,7 +255,7 @@ class Poller:
 
         log.info(
             "Starting poller (interval=%ds, mailbox=%s)",
-            self._settings.poll_interval_seconds,
+            self._get_poll_interval(),
             self._settings.m365_mailbox,
         )
 
@@ -257,11 +268,15 @@ class Poller:
                 log.error("Poll cycle error: %s", e, exc_info=True)
                 self._update_run_result(str(e))
 
-            # Interruptible sleep — checks _running every second for clean shutdown
-            for _ in range(self._settings.poll_interval_seconds):
-                if not self._running:
+            # Interruptible sleep — re-reads interval from DB each second so
+            # config changes take effect immediately without restarting.
+            elapsed = 0
+            while self._running:
+                interval = self._get_poll_interval()
+                if elapsed >= interval:
                     break
                 time.sleep(1)
+                elapsed += 1
 
         self._update_heartbeat("stopped")
         log.info("Poller stopped")

@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { X, AlertCircle } from "lucide-react";
 import { cn, formatDate } from "@/lib/utils";
 import { useClaimDetail } from "@/hooks/useClaims";
+import { CardSection, CardHeader } from "@/components/ui";
 
 interface ClaimModalProps {
   claimId: number | null;
@@ -10,14 +11,9 @@ interface ClaimModalProps {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-lg border border-border overflow-hidden">
-      <div className="px-3 py-2 bg-green-500/15 border-b border-green-500/30">
-        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-green-400">
-          {title}
-        </h4>
-      </div>
-      <div className="divide-y divide-border/60 text-sm">{children}</div>
-    </div>
+    <CardSection title={title}>
+      <div className="divide-y divide-border/60">{children}</div>
+    </CardSection>
   );
 }
 
@@ -228,10 +224,8 @@ export function ClaimModal({ claimId, onClose }: ClaimModalProps) {
               {claim.submission_payload && (
                 <div className="col-span-full rounded-lg border border-border overflow-hidden">
                   <details className="group">
-                    <summary className="flex items-center gap-2 px-3 py-2 bg-green-500/15 border-b border-green-500/30 cursor-pointer hover:bg-green-500/20 transition-colors list-none">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-green-400">
-                        ▶ Submission Payload
-                      </span>
+                    <summary className="cursor-pointer hover:bg-green-500/20 transition-colors list-none">
+                      <CardHeader title="▶ Submission Payload" />
                     </summary>
                     <pre className="bg-background p-3 text-xs text-muted-foreground overflow-x-auto max-h-[300px] overflow-y-auto">
                       {JSON.stringify(claim.submission_payload, null, 2)}

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useAppConfig, useUpdateAppConfig } from "@/hooks/useAppConfig";
 import { useSendTestEmail } from "@/hooks/usePoller";
 import { Toggle, SettingRow } from "@/components/admin/shared";
+import { SectionHeading } from "@/components/ui";
 import { type AppConfig } from "@/schemas/claim";
 import { cn } from "@/lib/utils";
 
@@ -57,13 +58,7 @@ export function Testing() {
     <div className="max-w-xl space-y-8">
       {/* Test mode */}
       <section>
-        <div className="mb-3">
-          <h2 className="text-base font-semibold text-foreground">Test Mode</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            When enabled, claims are routed to the test adjuster and test branch
-            regardless of what the email specifies.
-          </p>
-        </div>
+        <SectionHeading title="Test Mode" description="When enabled, claims are routed to the test adjuster and test branch regardless of what the email specifies." />
         <div className="rounded-lg border border-border bg-card px-4">
           <SettingRow
             label="Enable Test Mode"
@@ -141,15 +136,7 @@ export function Testing() {
 
       {/* Send test email */}
       <section>
-        <div className="mb-3">
-          <h2 className="text-base font-semibold text-foreground">
-            Send Test Email
-          </h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Injects a mock Acuity claim email into the mailbox for end-to-end
-            testing.
-          </p>
-        </div>
+        <SectionHeading title="Send Test Email" description="Injects a mock Acuity claim email into the mailbox for end-to-end testing." />
         <div className="rounded-lg border border-border bg-card px-4">
           <SettingRow
             label="Claim Ref"

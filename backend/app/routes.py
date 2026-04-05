@@ -8,7 +8,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, contains_eager, joinedload
 
-from app.config import Settings, get_settings
 from app.database import get_db
 from app.models import AppConfig, ClaimData, ProcessedEmail
 from app import poller_manager
@@ -31,7 +30,6 @@ from app.schemas import (
 router = APIRouter()
 
 SessionDep = Annotated[Session, Depends(get_db)]
-SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
 def _escape_like(search: str) -> str:
@@ -276,7 +274,7 @@ def get_trends(
 
 
 @router.get("/health", response_model=HealthResponse)
-def health_check(session: SessionDep, settings: SettingsDep):
+def health_check(session: SessionDep):
     """System health check — poller heartbeat recency + recent error rate."""
     last_processed = session.scalar(
         select(func.max(ProcessedEmail.processed_at))
@@ -285,6 +283,7 @@ def health_check(session: SessionDep, settings: SettingsDep):
     # Use poller heartbeat to determine if the poller is alive
     cfg = _get_or_create_config(session)
     last_heartbeat = cfg.last_heartbeat
+    poll_interval = cfg.poll_interval_seconds
 
     # Recent error rate (last hour)
     hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
@@ -305,7 +304,7 @@ def health_check(session: SessionDep, settings: SettingsDep):
         try:
             hb_dt = datetime.fromisoformat(last_heartbeat)
             age = datetime.now(timezone.utc) - hb_dt
-            if age <= timedelta(seconds=settings.poll_interval_seconds * 2):
+            if age <= timedelta(seconds=poll_interval * 2):
                 health_status = "ok"
             else:
                 health_status = "degraded"
@@ -319,7 +318,7 @@ def health_check(session: SessionDep, settings: SettingsDep):
         status=health_status,
         last_processed_at=last_processed,
         recent_error_rate=error_rate,
-        poll_interval=settings.poll_interval_seconds,
+        poll_interval=poll_interval,
     )
 
 
@@ -330,7 +329,7 @@ def _get_or_create_config(session: Session) -> AppConfig:
         cfg = AppConfig(
             id=1, dry_run=False, test_mode=False,
             test_adjuster_id="342436", test_branch_id="2529",
-            poller_enabled=True,
+            poller_enabled=True, poll_interval_seconds=60,
         )
         session.add(cfg)
         session.commit()

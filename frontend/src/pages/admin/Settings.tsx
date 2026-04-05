@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAppConfig, useUpdateAppConfig } from "@/hooks/useAppConfig";
 import { Toggle, SettingRow } from "@/components/admin/shared";
+import { SectionHeading } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
 export function AdminSettings() {
@@ -32,12 +33,7 @@ export function AdminSettings() {
   return (
     <div className="max-w-xl space-y-8">
       <section>
-        <div className="mb-3">
-          <h2 className="text-base font-semibold text-foreground">Processing</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Controls how claims are submitted to FileTrac.
-          </p>
-        </div>
+        <SectionHeading title="Processing" description="Controls how claims are submitted to FileTrac." />
         <div className="rounded-lg border border-border bg-card px-4">
           <SettingRow
             label="Dry Run"

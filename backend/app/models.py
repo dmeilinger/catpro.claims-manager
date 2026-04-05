@@ -20,6 +20,7 @@ class AppConfig(Base):
     test_branch_id: Mapped[str] = mapped_column(String, default="2529")
     updated_at: Mapped[str | None]
     poller_enabled: Mapped[bool] = mapped_column(default=True)
+    poll_interval_seconds: Mapped[int] = mapped_column(default=60)
     poller_status: Mapped[str | None]
     last_heartbeat: Mapped[str | None]
     last_run_at: Mapped[str | None]

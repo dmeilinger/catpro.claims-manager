@@ -8,5 +8,6 @@ data/*.db
 data/*.db-shm
 data/*.db-wal
 logs/*.log
+logs/*.pid
 *.egg-info/
 .claude/settings.local.json

@@ -20,16 +20,35 @@ _proc: subprocess.Popen | None = None
 
 
 def _kill_stale_poller() -> None:
-    """Kill any poller subprocess left over from a previous FastAPI instance."""
-    if not PID_FILE.exists():
-        return
+    """Kill any poller subprocess left over from a previous FastAPI instance.
+
+    Checks both the PID file and any running `scripts.poll` processes to
+    handle orphans that survived a hard uvicorn kill.
+    """
+    # Kill whatever is recorded in the PID file
+    if PID_FILE.exists():
+        try:
+            pid = int(PID_FILE.read_text().strip())
+            os.kill(pid, signal.SIGTERM)
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass
+        finally:
+            PID_FILE.unlink(missing_ok=True)
+
+    # Also kill any orphaned scripts.poll processes (hard kill leaves no PID file)
+    import subprocess as _sp
     try:
-        pid = int(PID_FILE.read_text().strip())
-        os.kill(pid, signal.SIGTERM)
-    except (ValueError, ProcessLookupError, PermissionError):
+        result = _sp.run(
+            ["pgrep", "-f", "scripts.poll"],
+            capture_output=True, text=True
+        )
+        for pid_str in result.stdout.splitlines():
+            try:
+                os.kill(int(pid_str), signal.SIGTERM)
+            except (ValueError, ProcessLookupError, PermissionError):
+                pass
+    except Exception:
         pass
-    finally:
-        PID_FILE.unlink(missing_ok=True)
 
 
 def _open_log_file():

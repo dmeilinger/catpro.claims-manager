@@ -161,6 +161,7 @@ class AppConfigSchema(BaseModel):
     test_branch_id: str
     updated_at: str | None = None
     poller_enabled: bool = True
+    poll_interval_seconds: int = 60
     poller_status: str | None = None
     last_heartbeat: str | None = None
     last_run_at: str | None = None
@@ -173,6 +174,7 @@ class AppConfigUpdate(BaseModel):
     test_adjuster_id: str | None = None
     test_branch_id: str | None = None
     poller_enabled: bool | None = None
+    poll_interval_seconds: int | None = None
 
 
 class PollerProcessStatus(BaseModel):

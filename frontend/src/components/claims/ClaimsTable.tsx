@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Search, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn, formatDate } from "@/lib/utils";
+import { Th } from "@/components/ui";
 import type { ClaimSummary } from "@/schemas/claim";
 
 interface ClaimsTableProps {
@@ -103,22 +104,12 @@ export function ClaimsTable({
       <div className="bg-card rounded-lg border border-border overflow-hidden">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-border">
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Date
-              </th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Subject
-              </th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Insured
-              </th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Status
-              </th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Claim ID
-              </th>
+            <tr className="bg-brand/15 border-b border-brand/30">
+              <Th>Date</Th>
+              <Th>Subject</Th>
+              <Th>Insured</Th>
+              <Th>Status</Th>
+              <Th>Claim ID</Th>
             </tr>
           </thead>
           <tbody>

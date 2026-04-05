@@ -58,7 +58,18 @@
       "Bash(find ~/.claude/session-handoffs/ -name \"*.md\" -mtime +14 -delete)",
       "Bash(mkdir -p ~/.claude/session-handoffs)",
       "Bash(chmod +x /Users/dirk.meilinger/Development/temp/temp5/run.sh)",
-      "Bash(chmod +x /Users/dirk.meilinger/Development/temp/temp5/start.sh /Users/dirk.meilinger/Development/temp/temp5/stop.sh)"
+      "Bash(chmod +x /Users/dirk.meilinger/Development/temp/temp5/start.sh /Users/dirk.meilinger/Development/temp/temp5/stop.sh)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5175/)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8175/api/v1/health)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://catpro.loc/)",
+      "Bash(dig catpro.loc +short)",
+      "Bash(nslookup catpro.loc)",
+      "Bash(curl -sv http://localhost:5175/)",
+      "Bash(kill 93627)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -H \"Host: catpro.loc\" http://localhost:5175/)",
+      "Bash(/Users/dirk.meilinger/Development/temp/catpro/.venv/bin/pip install:*)",
+      "Read(//opt/homebrew/Cellar/python@3.13/3.13.9_1/Frameworks/Python.framework/Versions/3.13/bin/**)",
+      "Bash(/Users/dirk.meilinger/Development/temp/catpro/.venv/bin/python3.13 -c \"import certifi; print\\(certifi.where\\(\\)\\)\")"
     ],
     "additionalDirectories": [
       "/Users/dirk.meilinger/.claude/session-handoffs"

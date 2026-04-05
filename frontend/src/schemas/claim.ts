@@ -7,6 +7,7 @@ export const AppConfigSchema = z.object({
   test_branch_id: z.string(),
   updated_at: z.string().nullable(),
   poller_enabled: z.boolean().default(true),
+  poll_interval_seconds: z.number().int().min(10).default(60),
   poller_status: z.string().nullable().default(null),
   last_heartbeat: z.string().nullable().default(null),
   last_run_at: z.string().nullable().default(null),

@@ -1,5 +1,17 @@
 @import "tailwindcss";
 
+/**
+ * Brand accent tokens — single source of truth for the app's accent colour.
+ * Change these two values to retheme all headers, badges, and table heads.
+ *   bg-brand/15       — subtle tinted background (card headers, table heads)
+ *   border-brand/30   — accent border
+ *   text-brand-fg     — accent foreground text
+ */
+@theme {
+  --color-brand: oklch(72.3% 0.219 149.6);    /* green-500 — tint base */
+  --color-brand-fg: oklch(79.2% 0.209 151.7); /* green-400 — readable text on tints */
+}
+
 @layer base {
   :root {
     /* Cursor-style dark theme */
