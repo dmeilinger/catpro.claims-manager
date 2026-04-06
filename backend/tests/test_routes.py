@@ -10,7 +10,7 @@ from app.models import EmailAction, ProcessedEmail
 
 def _make_email(db, *, status="pending", triage_status="unreviewed",
                 subject="Test", sender="s@example.com", claim_id=None,
-                dry_run=False, error_message=None) -> ProcessedEmail:
+                dry_run=False, error_message=None, body_text=None) -> ProcessedEmail:
     uid = uuid.uuid4().hex[:8]
     row = ProcessedEmail(
         message_id=f"msg-{uid}",
@@ -24,6 +24,7 @@ def _make_email(db, *, status="pending", triage_status="unreviewed",
         claim_id=claim_id,
         dry_run=dry_run,
         error_message=error_message,
+        body_text=body_text,
     )
     db.add(row)
     db.flush()
@@ -180,6 +181,19 @@ class TestEmailLog:
         _make_email(db, triage_status="actioned")
         resp = client.get("/api/v1/email-log")
         assert "triage_status" in resp.json()["items"][0]
+
+    def test_body_text_included_in_list_items(self, client, db):
+        """body_text must be returned in the list response (not just the detail endpoint).
+        Regression: the EmailLogEntry constructor in list_email_log() omitted body_text,
+        causing the API to return null even when the DB row had the text."""
+        _make_email(db, body_text="Hello from the email body.")
+        _make_email(db, body_text=None)
+
+        resp = client.get("/api/v1/email-log")
+        items = resp.json()["items"]
+        texts = {item["body_text"] for item in items}
+        assert "Hello from the email body." in texts
+        assert None in texts  # rows without body_text still serialise correctly
 
 
 # ── GET /email-log/{id} ───────────────────────────────────────────────────────
