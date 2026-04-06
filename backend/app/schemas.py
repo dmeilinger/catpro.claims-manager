@@ -1,6 +1,7 @@
 """Pydantic response schemas for the claims API."""
 
 import json
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, computed_field, field_validator
 
@@ -190,3 +191,96 @@ class TestEmailRequest(BaseModel):
     ref: str = "9999"
     adjuster: str = "Alan"
     subject: str | None = None
+
+
+# ── Triage / Email log schemas ───────────────────────────────────────────────
+
+class EmailActionEntry(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    action_type: str
+    actor: str
+    details: dict | None = None
+    created_at: str
+
+    @field_validator("details", mode="before")
+    @classmethod
+    def parse_details(cls, v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except (json.JSONDecodeError, ValueError):
+                return None
+        return v
+
+
+class InboxEntry(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    subject: str | None = None
+    sender: str | None = None
+    received_at: str | None = None
+    processed_at: str
+    status: str
+    triage_status: str
+    dry_run: bool = False
+    error_message: str | None = None
+    insured_name: str | None = None
+
+
+class InboxCountResponse(BaseModel):
+    count: int
+
+
+class InboxResponse(BaseModel):
+    items: list[InboxEntry]
+    total: int
+    page: int
+    page_size: int
+
+
+class EmailLogStats(BaseModel):
+    total: int
+    success: int   # real FileTrac claims (not dry_run)
+    dry_run: int   # dry-run completions
+    skipped: int
+    error: int
+    # NOTE: needs_review intentionally omitted — /inbox/count is the source of truth
+
+
+class EmailLogEntry(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    subject: str | None = None
+    sender: str | None = None
+    received_at: str | None = None
+    processed_at: str
+    status: str
+    triage_status: str
+    dry_run: bool = False
+    claim_id: str | None = None
+    error_message: str | None = None
+    insured_name: str | None = None
+
+
+class EmailLogDetail(EmailLogEntry):
+    """Extends EmailLogEntry with the full action timeline."""
+
+    actions: list[EmailActionEntry] = []
+
+
+class EmailLogResponse(BaseModel):
+    items: list[EmailLogEntry]
+    total: int
+    page: int
+    page_size: int
+    stats: EmailLogStats
+
+
+class TriageActionRequest(BaseModel):
+    # Pydantic Literal provides automatic 422 — no manual dict lookup needed
+    action: Literal["flag_review", "dismiss", "approve"]
+    # actor intentionally omitted — hardcoded to "admin" in route until auth exists

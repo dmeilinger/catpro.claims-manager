@@ -9,7 +9,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, contains_eager, joinedload
 
 from app.database import get_db
-from app.models import AppConfig, ClaimData, ProcessedEmail
+from app.models import AppConfig, ClaimData, EmailAction, ProcessedEmail
 from app import poller_manager
 from app.schemas import (
     AppConfigSchema,
@@ -20,10 +20,19 @@ from app.schemas import (
     ClaimStats,
     ClaimSummary,
     ClaimTrends,
+    EmailActionEntry,
+    EmailLogDetail,
+    EmailLogEntry,
+    EmailLogResponse,
+    EmailLogStats,
     HealthResponse,
+    InboxCountResponse,
+    InboxEntry,
+    InboxResponse,
     PollerLogsResponse,
     PollerProcessStatus,
     TestEmailRequest,
+    TriageActionRequest,
     TrendPoint,
 )
 
@@ -118,8 +127,10 @@ def list_claims(
     # Total count
     total = session.scalar(select(func.count()).select_from(base.subquery()))
 
-    # Sorting
-    sort_col = getattr(ProcessedEmail, sort_by, ProcessedEmail.processed_at)
+    # Sorting — restrict to safe column names to prevent attribute injection
+    _SORTABLE = {"processed_at", "received_at", "status", "subject", "sender"}
+    safe_sort_by = sort_by if sort_by in _SORTABLE else "processed_at"
+    sort_col = getattr(ProcessedEmail, safe_sort_by)
     order = sort_col.desc() if sort_order == "desc" else sort_col.asc()
 
     # Data query with eager loading
@@ -402,3 +413,213 @@ def send_test_email(body: TestEmailRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     return {"status": "sent", "ref": body.ref, "adjuster": body.adjuster}
+
+
+# ── Triage / Inbox / Email History ──────────────────────────────────────────
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+ACTION_TO_STATUS: dict[str, str] = {
+    "flag_review": "needs_review",
+    "dismiss": "actioned",
+    "approve": "actioned",
+}
+
+
+def _compute_email_log_stats(session: Session, base_subquery) -> EmailLogStats:
+    """Single GROUP BY query — replaces six separate scalar COUNT queries.
+
+    Uses subquery column references (base_subquery.c.*) to avoid a cartesian
+    product between the ORM model and the subquery.
+    """
+    from sqlalchemy import case as sa_case, and_
+    c = base_subquery.c
+    row = session.execute(
+        select(
+            func.count().label("total"),
+            func.sum(sa_case(
+                (and_(c.status == "success", c.dry_run == False), 1),  # noqa: E712
+                else_=0,
+            )).label("success"),
+            func.sum(sa_case(
+                (c.dry_run == True, 1), else_=0,  # noqa: E712
+            )).label("dry_run"),
+            func.sum(sa_case(
+                (c.status == "skipped", 1), else_=0,
+            )).label("skipped"),
+            func.sum(sa_case(
+                (c.status == "error", 1), else_=0,
+            )).label("error"),
+        ).select_from(base_subquery)
+    ).one()
+    return EmailLogStats(
+        total=row.total or 0,
+        success=row.success or 0,
+        dry_run=row.dry_run or 0,
+        skipped=row.skipped or 0,
+        error=row.error or 0,
+    )
+
+
+def _to_inbox_entry(row: ProcessedEmail) -> InboxEntry:
+    cd = row.claim_data
+    first = cd.insured_first_name if cd else None
+    last = cd.insured_last_name if cd else None
+    insured_name = f"{last}, {first}" if last and first else last or first
+    return InboxEntry(
+        id=row.id, subject=row.subject, sender=row.sender,
+        received_at=row.received_at, processed_at=row.processed_at,
+        status=row.status, triage_status=row.triage_status,
+        dry_run=row.dry_run, error_message=row.error_message,
+        insured_name=insured_name,
+    )
+
+
+def _to_email_log_detail(row: ProcessedEmail) -> EmailLogDetail:
+    cd = row.claim_data
+    first = cd.insured_first_name if cd else None
+    last = cd.insured_last_name if cd else None
+    insured_name = f"{last}, {first}" if last and first else last or first
+    return EmailLogDetail(
+        id=row.id, subject=row.subject, sender=row.sender,
+        received_at=row.received_at, processed_at=row.processed_at,
+        status=row.status, triage_status=row.triage_status,
+        dry_run=row.dry_run, claim_id=row.claim_id,
+        error_message=row.error_message, insured_name=insured_name,
+        actions=[EmailActionEntry.model_validate(a) for a in row.actions],
+    )
+
+
+@router.get("/inbox/count", response_model=InboxCountResponse)
+def get_inbox_count(session: SessionDep):
+    """Badge count — single indexed COUNT, polled every 30s by the frontend."""
+    count = session.scalar(
+        select(func.count()).where(ProcessedEmail.triage_status == "needs_review")
+    ) or 0
+    return InboxCountResponse(count=count)
+
+
+@router.get("/inbox", response_model=InboxResponse)
+def list_inbox(
+    session: SessionDep,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+):
+    """Cases needing human review — paginated."""
+    base = select(ProcessedEmail).where(ProcessedEmail.triage_status == "needs_review")
+    total = session.scalar(select(func.count()).select_from(base.subquery())) or 0
+    rows = session.scalars(
+        base.options(joinedload(ProcessedEmail.claim_data))
+        .order_by(ProcessedEmail.received_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).unique().all()
+    return InboxResponse(
+        items=[_to_inbox_entry(row) for row in rows],
+        total=total, page=page, page_size=page_size,
+    )
+
+
+@router.get("/email-log", response_model=EmailLogResponse)
+def list_email_log(
+    session: SessionDep,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    status: str | None = None,
+    triage_status: str | None = None,
+    search: str | None = None,
+    from_date: str | None = Query(None, alias="from"),
+    to_date: str | None = Query(None, alias="to"),
+):
+    """Full audit trail — all emails, all statuses."""
+    base = select(ProcessedEmail)
+    if status:
+        base = base.where(ProcessedEmail.status == status)
+    if triage_status:
+        base = base.where(ProcessedEmail.triage_status == triage_status)
+    if from_date:
+        base = base.where(ProcessedEmail.processed_at >= from_date)
+    if to_date:
+        base = base.where(ProcessedEmail.processed_at <= to_date + "T23:59:59")
+    if search and len(search) >= 2:
+        escaped = _escape_like(search)
+        pattern = f"%{escaped}%"
+        base = base.outerjoin(ClaimData).where(
+            or_(
+                ProcessedEmail.subject.ilike(pattern, escape="\\"),
+                ProcessedEmail.sender.ilike(pattern, escape="\\"),
+                ClaimData.insured_first_name.ilike(pattern, escape="\\"),
+                ClaimData.insured_last_name.ilike(pattern, escape="\\"),
+            )
+        )
+
+    stats = _compute_email_log_stats(session, base.subquery())
+    total = session.scalar(select(func.count()).select_from(base.subquery())) or 0
+
+    rows = session.scalars(
+        base.options(joinedload(ProcessedEmail.claim_data))
+        .order_by(ProcessedEmail.processed_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).unique().all()
+
+    items = []
+    for row in rows:
+        cd = row.claim_data
+        first = cd.insured_first_name if cd else None
+        last = cd.insured_last_name if cd else None
+        insured_name = f"{last}, {first}" if last and first else last or first
+        items.append(EmailLogEntry(
+            id=row.id, subject=row.subject, sender=row.sender,
+            received_at=row.received_at, processed_at=row.processed_at,
+            status=row.status, triage_status=row.triage_status,
+            dry_run=row.dry_run, claim_id=row.claim_id,
+            error_message=row.error_message, insured_name=insured_name,
+        ))
+
+    return EmailLogResponse(items=items, total=total, page=page, page_size=page_size, stats=stats)
+
+
+@router.get("/email-log/{email_id}", response_model=EmailLogDetail)
+def get_email_log_entry(email_id: int, session: SessionDep):
+    """Detail with full action timeline. Uses selectinload for one-to-many."""
+    from sqlalchemy.orm import selectinload
+    row = session.scalar(
+        select(ProcessedEmail)
+        .options(
+            joinedload(ProcessedEmail.claim_data),      # one-to-one: joinedload OK
+            selectinload(ProcessedEmail.actions),       # one-to-many: avoids row multiplication
+        )
+        .where(ProcessedEmail.id == email_id)
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Email not found")
+    return _to_email_log_detail(row)
+
+
+@router.patch("/email-log/{email_id}/triage", response_model=EmailLogDetail)
+def triage_email(email_id: int, body: TriageActionRequest, session: SessionDep):
+    """Triage action. actor hardcoded to 'admin' until auth exists."""
+    from sqlalchemy.orm import selectinload
+    row = session.scalar(
+        select(ProcessedEmail)
+        .options(selectinload(ProcessedEmail.actions))
+        .where(ProcessedEmail.id == email_id)
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    now = _now()
+    row.triage_status = ACTION_TO_STATUS[body.action]  # Pydantic already validated action
+    session.add(EmailAction(
+        email_id=email_id,
+        action_type=body.action,
+        actor="admin",   # TODO(auth): replace with identity from auth token
+        details=None,
+        created_at=now,
+    ))
+    session.commit()
+    session.refresh(row)
+    return _to_email_log_detail(row)
