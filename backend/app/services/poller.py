@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from app.config import get_settings
 from app.database import SessionLocal
-from app.models import AppConfig, ClaimData as ClaimDataRow, ProcessedEmail
+from app.models import AppConfig, ClaimData as ClaimDataRow, EmailAction, ProcessedEmail
 from app.services.email_source import EmailMessage, GraphMailSource, SkippedEmail
 from app.services.filetrac_auth import build_session, login
 from app.services.filetrac_submit import submit_claim
@@ -88,6 +88,8 @@ class Poller:
                 received_at=msg.received_at,
                 processed_at=_now(),
                 status="pending",
+                triage_status="unreviewed",
+                body_text=msg.body_text,
             )
             db.add(row)
             db.commit()
@@ -95,12 +97,21 @@ class Poller:
             return row.id
 
     def _mark_success(self, row_id: int, claim_id: str) -> None:
+        now = _now()
         with SessionLocal() as db:
             row = db.get(ProcessedEmail, row_id)
             if row:
                 row.status = "success"
                 row.claim_id = claim_id
-                row.processed_at = _now()
+                row.processed_at = now
+                row.triage_status = "unreviewed"  # human review required; not auto-actioned
+                db.add(EmailAction(
+                    email_id=row_id,
+                    action_type="created_claim",
+                    actor="poller",
+                    details=json.dumps({"claim_id": claim_id}),
+                    created_at=now,
+                ))
                 db.commit()
 
     def _insert_skipped(self, item: SkippedEmail) -> None:
@@ -116,6 +127,8 @@ class Poller:
                 status="skipped",
                 error_message=item.reason,
                 dry_run=False,
+                triage_status="unreviewed",
+                body_text=item.body_text,
             )
             db.add(row)
             try:
@@ -130,6 +143,7 @@ class Poller:
                 row.status = "error"
                 row.error_message = error_message
                 row.processed_at = _now()
+                row.triage_status = "needs_review"
                 db.commit()
 
     def _insert_claim_data(

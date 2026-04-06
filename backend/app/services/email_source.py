@@ -35,6 +35,7 @@ class SkippedEmail(NamedTuple):
     sender: str
     received_at: str
     reason: str               # human-readable explanation
+    body_text: str            # stored for future agent classification
 
 
 # ── Protocol ─────────────────────────────────────────────────────────────────
@@ -166,6 +167,11 @@ class GraphMailSource:
             internet_message_id = msg.get("internetMessageId", "")
             attachments = msg.get("attachments", [])
 
+            # Extract body_text early — needed for all email types including skipped.
+            body_text = msg.get("body", {}).get("content", "")
+            if msg.get("body", {}).get("contentType") == "html":
+                body_text = BeautifulSoup(body_text, "html.parser").get_text(separator="\n")
+
             if not attachments:
                 skipped.append(SkippedEmail(
                     message_id=msg["id"],
@@ -174,6 +180,7 @@ class GraphMailSource:
                     sender=sender,
                     received_at=received_at,
                     reason="no attachments",
+                    body_text=body_text,
                 ))
                 continue
 
@@ -195,12 +202,9 @@ class GraphMailSource:
                     sender=sender,
                     received_at=received_at,
                     reason=f"no PDF attachments (found: {attachment_summary})",
+                    body_text=body_text,
                 ))
                 continue
-
-            body_text = msg.get("body", {}).get("content", "")
-            if msg.get("body", {}).get("contentType") == "html":
-                body_text = BeautifulSoup(body_text, "html.parser").get_text(separator="\n")
 
             messages.append(EmailMessage(
                 message_id=msg["id"],
