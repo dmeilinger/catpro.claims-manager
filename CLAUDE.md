@@ -21,27 +21,43 @@ Always use **`python3.13`** — system `python3` is 3.9, `pip3` targets 3.13.
 ## Project Structure
 
 ```
-catpro/                     — Main package
-  __init__.py
-  process_claim.py          — Core pipeline: parse, extract, auth, submit
-  email_source.py           — EmailSource Protocol + EML + Graph implementations
-  db.py                     — SQLite tracking (processed_emails + claim_data tables)
-  config.py                 — Pydantic settings from .env
-  poller.py                 — M365 polling loop
-  test_email.py             — Inject test emails into M365 mailbox
-  adjusters.json            — Adjuster name → FileTrac ID mapping
+backend/                    — FastAPI application
+  app/
+    main.py                 — FastAPI app, CORS, router mount
+    routes.py               — API endpoints
+    schemas.py              — Pydantic request/response schemas
+    models.py               — SQLAlchemy ORM models
+    config.py               — Pydantic settings from .env
+    database.py             — SQLAlchemy engine + SessionLocal
+    poller_manager.py       — Background poller thread management
+    services/
+      email_source.py       — EmailSource Protocol + EmlFileSource + GraphMailSource
+      poller.py             — M365 polling loop
+      claim_processor.py    — Core pipeline: parse, extract, auth, submit
+      eml_parser.py         — EML file parsing
+      pdf_extractor.py      — PDF text extraction + field parsing
+      filetrac_auth.py      — Cognito SRP + TOTP + evolveLogin SSO
+      filetrac_submit.py    — FileTrac claim submission
+      test_email.py         — Inject test emails into M365 mailbox
+  alembic/                  — Database migrations
+  scripts/
+    poll.py                 — Poller entry point
+    process_claim.py        — CLI: process a single EML file
+    send_test_email.py      — CLI: inject test emails
+  tests/                    — pytest test suite
+frontend/                   — React + Vite dashboard
+adjusters.json              — Adjuster name → FileTrac ID mapping
 data/                       — Runtime data (gitignored except .gitkeep)
   claims.db                 — SQLite database (created at runtime)
   templates/
     sample_acuity_claim.eml — Mock Acuity claim with fake data (for testing)
-requirements.txt            — Python dependencies
 .env                        — Credentials (gitignored)
 docs/                       — Architecture and requirements
 ```
 
 ## Authentication
 
-Fully implemented in `catpro/process_claim.py`. Three-step flow:
+Fully implemented in `backend/app/services/filetrac_auth.py`. Three-step flow:
 
 1. **AWS Cognito SRP** — `pycognito` handles SRP handshake + SOFTWARE_TOKEN_MFA challenge
 2. **TOTP** — generated via `pyotp` from `FILETRAC_TOTP_SECRET`; window-boundary guard (waits if <5s remaining)
@@ -93,44 +109,41 @@ LLM extraction not used — add later for other insurers.
 
 ## Entry Points
 
+### API server
+```bash
+cd backend && python3.13 -m uvicorn app.main:app --port 8175 --host 127.0.0.1 --app-dir backend
+```
+
 ### CLI (single file)
 ```bash
-python3.13 -m catpro.process_claim Fw_TG4832.eml
+cd backend && python3.13 scripts/process_claim.py Fw_TG4832.eml
 ```
 
 ### Poller (M365 mailbox)
 ```bash
-python3.13 -m catpro.poller
+cd backend && python3.13 scripts/poll.py
 ```
 Polls `M365_MAILBOX` for unread emails with PDF attachments, processes them through the claim pipeline, and tracks results in SQLite (`data/claims.db`).
 
 ### Test email generator
 ```bash
-python3.13 -m catpro.test_email                   # default mock, ref TG9999
-python3.13 -m catpro.test_email --ref 0001         # custom ref number
-python3.13 -m catpro.test_email --adjuster "Doug"  # custom adjuster name
+cd backend && python3.13 scripts/send_test_email.py                   # default mock, ref TG9999
+cd backend && python3.13 scripts/send_test_email.py --ref 0001         # custom ref number
+cd backend && python3.13 scripts/send_test_email.py --adjuster "Doug"  # custom adjuster name
 ```
 Sends a real email (via Graph API `sendMail`) to the test mailbox with mock Acuity PDFs.
 
-### Programmatic
-```python
-from catpro.process_claim import parse_eml, extract_claim_fields, build_session, login, submit_claim
-body, pdfs = parse_eml('email.eml')
-claim = extract_claim_fields(body, pdfs)
-session = build_session()
-login(session)
-result = submit_claim(session, claim)  # returns SubmitResult
-print(result.claim_id)                 # "claimID=NNNNNNN" or "DRY_RUN"
-print(result.claim_fields)             # extracted fields dict
-print(result.resolved_ids)             # FileTrac IDs (company, adjuster, etc.)
+### Tests
+```bash
+cd backend && python3.13 -m pytest tests/ -v
 ```
 
 ## M365 Email Polling
 
-- **`catpro/email_source.py`**: `EmailSource` Protocol + `EmlFileSource` (CLI) + `GraphMailSource` (Graph API via `msal`)
-- **`catpro/db.py`**: SQLite tracking — `processed_emails` + `claim_data` tables
-- **`catpro/config.py`**: Pydantic `Settings` loading all `.env` vars
-- **`catpro/poller.py`**: `while True` loop with SIGTERM handling for Docker
+- **`backend/app/services/email_source.py`**: `EmailSource` Protocol + `EmlFileSource` (CLI) + `GraphMailSource` (Graph API via `msal`)
+- **`backend/app/models.py`**: SQLAlchemy ORM — `processed_emails`, `claim_data`, `email_actions` tables
+- **`backend/app/config.py`**: Pydantic `Settings` loading all `.env` vars
+- **`backend/app/services/poller.py`**: `while True` loop with SIGTERM handling for Docker
 
 Processed emails are marked read and moved to a **"Processed"** folder in the mailbox (auto-created). Failed emails stay unread in inbox for manual review.
 
@@ -178,6 +191,12 @@ Test account defaults (override in `.env`):
 
 For development, always use `DRY_RUN=true` + `TEST_MODE=true`.
 
+## GitHub Remote
+
+- **Origin**: `git@github-personal:dmeilinger/catpro.claims-manager.git`
+- **SSH key**: `~/.ssh/id_dmeilinger_personal` (via `github-personal` host alias in `~/.ssh/config`)
+- Always use SSH (not HTTPS) for GitHub operations — use `git@github-personal:dmeilinger/...` URLs, not `https://github.com/dmeilinger/...`
+
 ## Local Dev Routing (Caddy)
 
 Caddy runs as a local reverse proxy for `*.loc` domains. Config: `/opt/homebrew/etc/Caddyfile`
@@ -193,9 +212,9 @@ Reload after changes: `caddy reload --config /opt/homebrew/etc/Caddyfile`
 DNS for `.loc` is handled by a local resolver (not `/etc/hosts`).
 Vite must have `allowedHosts: ['catpro.loc']` in `vite.config.ts` or Caddy proxying will 403.
 
-## Future: FastAPI + Docker
+## FastAPI + Docker
 
-The poller is designed for future FastAPI deployment — `poll_once()` wraps in `asyncio.to_thread`, plus webhook endpoint for real-time triggers. See `docs/architecture.md` Phase 3.
+The FastAPI app is running. The poller runs as a background thread managed by `backend/app/poller_manager.py`. See `docs/architecture.md` for full architecture.
 
 ## Browser Automation (exploration only)
 

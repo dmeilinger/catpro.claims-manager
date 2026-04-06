@@ -41,14 +41,22 @@ class ProcessedEmail(Base):
     status: Mapped[str] = mapped_column(String, default="pending")
     error_message: Mapped[str | None]
     dry_run: Mapped[bool] = mapped_column(default=False)
+    triage_status: Mapped[str] = mapped_column(String, default="unreviewed")
+    body_text: Mapped[str | None] = mapped_column(Text)
+    # NOTE: agent_classification, agent_confidence, agent_reasoning intentionally
+    # omitted until the agent ships. They exist in the DB but not in the ORM model.
 
     claim_data: Mapped["ClaimData | None"] = relationship(
         back_populates="email", uselist=False
+    )
+    actions: Mapped[list["EmailAction"]] = relationship(
+        back_populates="email", order_by="EmailAction.created_at"
     )
 
     __table_args__ = (
         Index("ix_processed_emails_status", "status"),
         Index("ix_processed_emails_processed_at", "processed_at"),
+        Index("ix_processed_emails_triage_status", "triage_status"),
     )
 
     def __repr__(self) -> str:
@@ -127,3 +135,24 @@ class ClaimData(Base):
 
     def __repr__(self) -> str:
         return f"<ClaimData id={self.id} email_id={self.email_id}>"
+
+
+class EmailAction(Base):
+    __tablename__ = "email_actions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email_id: Mapped[int] = mapped_column(ForeignKey("processed_emails.id"))
+    action_type: Mapped[str]
+    actor: Mapped[str]
+    details: Mapped[str | None] = mapped_column(Text)  # JSON; parse in schema validator
+    created_at: Mapped[str]
+
+    email: Mapped["ProcessedEmail"] = relationship(back_populates="actions")
+
+    __table_args__ = (
+        Index("ix_email_actions_email_id", "email_id"),
+        Index("ix_email_actions_created_at", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<EmailAction id={self.id} type={self.action_type!r} actor={self.actor!r}>"

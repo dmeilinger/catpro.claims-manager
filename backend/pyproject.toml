@@ -14,3 +14,7 @@ catpro-test-email = "scripts.send_test_email:main"
 
 [tool.setuptools.packages.find]
 include = ["app*", "scripts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
