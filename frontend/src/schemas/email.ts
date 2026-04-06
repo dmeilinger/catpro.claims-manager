@@ -51,6 +51,7 @@ export const EmailLogEntrySchema = z.object({
   claim_id: z.string().nullable(),
   error_message: z.string().nullable(),
   insured_name: z.string().nullable(),
+  body_text: z.string().nullish(),
 });
 
 export const EmailLogDetailSchema = EmailLogEntrySchema.extend({

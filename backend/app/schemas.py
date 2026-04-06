@@ -264,6 +264,7 @@ class EmailLogEntry(BaseModel):
     claim_id: str | None = None
     error_message: str | None = None
     insured_name: str | None = None
+    body_text: str | None = None
 
 
 class EmailLogDetail(EmailLogEntry):

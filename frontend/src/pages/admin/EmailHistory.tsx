@@ -114,6 +114,16 @@ function EmailHistoryRow({ item }: { item: EmailLogEntry }) {
                 · Triage: {TRIAGE_LABELS[item.triage_status] ?? item.triage_status}
                 {item.dry_run && " · Dry Run"}
               </p>
+              {item.body_text && (
+                <details className="pt-1">
+                  <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">
+                    Email body
+                  </summary>
+                  <pre className="mt-2 whitespace-pre-wrap font-sans text-xs text-foreground bg-muted/50 rounded p-3 max-h-64 overflow-y-auto border border-border">
+                    {item.body_text}
+                  </pre>
+                </details>
+              )}
               {canFlag && (
                 <button
                   disabled={isPending}

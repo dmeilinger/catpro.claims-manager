@@ -574,6 +574,7 @@ def list_email_log(
             status=row.status, triage_status=row.triage_status,
             dry_run=row.dry_run, claim_id=row.claim_id,
             error_message=row.error_message, insured_name=_insured_name(row.claim_data),
+            body_text=row.body_text,
         )
         for row in rows
     ]
