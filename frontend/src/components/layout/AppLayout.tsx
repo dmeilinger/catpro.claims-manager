@@ -9,9 +9,11 @@ import { cn } from "@/lib/utils";
 const pageTitles: Record<string, string> = {
   "/": "Dashboard",
   "/claims": "Claims",
+  "/inbox": "Inbox",
   "/admin/settings": "Settings",
   "/admin/polling": "Polling",
   "/admin/testing": "Testing",
+  "/admin/email-history": "Email History",
   "/health": "System Health",
 };
 

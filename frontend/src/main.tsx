@@ -6,9 +6,11 @@ import { queryClient } from "@/lib/queryClient";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Claims } from "@/pages/Claims";
+import { InboxPage } from "@/pages/Inbox";
 import { AdminSettings } from "@/pages/admin/Settings";
 import { Polling } from "@/pages/admin/Polling";
 import { Testing } from "@/pages/admin/Testing";
+import { EmailHistory } from "@/pages/admin/EmailHistory";
 import "./index.css";
 
 // Dashboard brings in Recharts (~500 kB) — lazy-load so it splits into its own chunk
@@ -30,6 +32,7 @@ const router = createBrowserRouter([
         ),
       },
       { path: "claims", element: <Claims /> },
+      { path: "inbox", element: <InboxPage /> },
       // Legacy redirect
       { path: "settings", element: <Navigate to="/admin/settings" replace /> },
       {
@@ -39,6 +42,7 @@ const router = createBrowserRouter([
           { path: "settings", element: <AdminSettings /> },
           { path: "polling", element: <Polling /> },
           { path: "testing", element: <Testing /> },
+          { path: "email-history", element: <EmailHistory /> },
         ],
       },
       {

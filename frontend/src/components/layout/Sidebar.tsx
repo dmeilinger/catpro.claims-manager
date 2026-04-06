@@ -8,8 +8,11 @@ import {
   FlaskConical,
   ChevronLeft,
   ChevronRight,
+  Inbox,
+  History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useInboxCount } from "@/hooks/useInbox";
 
 interface SidebarProps {
   collapsed: boolean;
@@ -19,15 +22,20 @@ interface SidebarProps {
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/claims", icon: FileText, label: "Claims" },
+  { to: "/inbox", icon: Inbox, label: "Inbox" },
 ];
 
 const adminItems = [
   { to: "/admin/settings", icon: Settings, label: "Settings" },
   { to: "/admin/polling", icon: Radio, label: "Polling" },
   { to: "/admin/testing", icon: FlaskConical, label: "Testing" },
+  { to: "/admin/email-history", icon: History, label: "Email History" },
 ];
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
+  const { data: inboxCountData } = useInboxCount();
+  const inboxCount = inboxCountData?.count ?? 0;
+
   return (
     <aside
       className={cn(
@@ -59,7 +67,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             end={to === "/"}
             className={({ isActive }) =>
               cn(
-                "flex items-center gap-3 px-2.5 py-2 rounded-md text-sm transition-colors",
+                "relative flex items-center gap-3 px-2.5 py-2 rounded-md text-sm transition-colors",
                 isActive
                   ? "bg-primary/10 text-primary border-l-2 border-primary"
                   : "text-muted-foreground hover:text-foreground hover:bg-accent"
@@ -68,6 +76,18 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           >
             <Icon size={18} />
             {!collapsed && <span>{label}</span>}
+            {/* Inbox badge — amber work-queue indicator, not an error */}
+            {to === "/inbox" && !collapsed && inboxCount > 0 && (
+              <span className={cn(
+                "ml-auto flex h-5 min-w-[1.25rem] items-center justify-center",
+                "rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white tabular-nums"
+              )}>
+                {inboxCount > 99 ? "99+" : inboxCount}
+              </span>
+            )}
+            {to === "/inbox" && collapsed && inboxCount > 0 && (
+              <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-amber-500" />
+            )}
           </NavLink>
         ))}
 
