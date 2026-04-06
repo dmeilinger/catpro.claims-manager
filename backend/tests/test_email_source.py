@@ -232,8 +232,8 @@ class TestNextLinkPagination:
             mock_req.return_value.json.return_value = infinite_page
             source.fetch_unread()
 
-        # Must stop at MAX_PAGES (20)
-        assert mock_req.call_count <= 20
+        # Must stop at exactly MAX_PAGES (20), not more
+        assert mock_req.call_count == 20
 
     def test_top_50_in_initial_url(self):
         """Initial fetch must use $top=50 (not $top=10)."""

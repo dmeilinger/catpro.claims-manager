@@ -463,11 +463,15 @@ def _compute_email_log_stats(session: Session, base_subquery) -> EmailLogStats:
     )
 
 
-def _to_inbox_entry(row: ProcessedEmail) -> InboxEntry:
-    cd = row.claim_data
+def _insured_name(cd: "ClaimData | None") -> "str | None":
+    """Format insured name from ClaimData, handling partial and missing data."""
     first = cd.insured_first_name if cd else None
     last = cd.insured_last_name if cd else None
-    insured_name = f"{last}, {first}" if last and first else last or first
+    return f"{last}, {first}" if last and first else last or first
+
+
+def _to_inbox_entry(row: ProcessedEmail) -> InboxEntry:
+    insured_name = _insured_name(row.claim_data)
     return InboxEntry(
         id=row.id, subject=row.subject, sender=row.sender,
         received_at=row.received_at, processed_at=row.processed_at,
@@ -478,10 +482,7 @@ def _to_inbox_entry(row: ProcessedEmail) -> InboxEntry:
 
 
 def _to_email_log_detail(row: ProcessedEmail) -> EmailLogDetail:
-    cd = row.claim_data
-    first = cd.insured_first_name if cd else None
-    last = cd.insured_last_name if cd else None
-    insured_name = f"{last}, {first}" if last and first else last or first
+    insured_name = _insured_name(row.claim_data)
     return EmailLogDetail(
         id=row.id, subject=row.subject, sender=row.sender,
         received_at=row.received_at, processed_at=row.processed_at,
@@ -555,8 +556,9 @@ def list_email_log(
             )
         )
 
-    stats = _compute_email_log_stats(session, base.subquery())
-    total = session.scalar(select(func.count()).select_from(base.subquery())) or 0
+    sq = base.subquery()
+    stats = _compute_email_log_stats(session, sq)
+    total = stats.total  # avoids a second COUNT(*) against the same subquery
 
     rows = session.scalars(
         base.options(joinedload(ProcessedEmail.claim_data))
@@ -565,19 +567,16 @@ def list_email_log(
         .limit(page_size)
     ).unique().all()
 
-    items = []
-    for row in rows:
-        cd = row.claim_data
-        first = cd.insured_first_name if cd else None
-        last = cd.insured_last_name if cd else None
-        insured_name = f"{last}, {first}" if last and first else last or first
-        items.append(EmailLogEntry(
+    items = [
+        EmailLogEntry(
             id=row.id, subject=row.subject, sender=row.sender,
             received_at=row.received_at, processed_at=row.processed_at,
             status=row.status, triage_status=row.triage_status,
             dry_run=row.dry_run, claim_id=row.claim_id,
-            error_message=row.error_message, insured_name=insured_name,
-        ))
+            error_message=row.error_message, insured_name=_insured_name(row.claim_data),
+        )
+        for row in rows
+    ]
 
     return EmailLogResponse(items=items, total=total, page=page, page_size=page_size, stats=stats)
 
@@ -604,9 +603,7 @@ def triage_email(email_id: int, body: TriageActionRequest, session: SessionDep):
     """Triage action. actor hardcoded to 'admin' until auth exists."""
     from sqlalchemy.orm import selectinload
     row = session.scalar(
-        select(ProcessedEmail)
-        .options(selectinload(ProcessedEmail.actions))
-        .where(ProcessedEmail.id == email_id)
+        select(ProcessedEmail).where(ProcessedEmail.id == email_id)
     )
     if not row:
         raise HTTPException(status_code=404, detail="Email not found")
@@ -621,5 +618,15 @@ def triage_email(email_id: int, body: TriageActionRequest, session: SessionDep):
         created_at=now,
     ))
     session.commit()
-    session.refresh(row)
-    return _to_email_log_detail(row)
+
+    # Re-query with both relationships to get fresh state (including the new action).
+    # session.refresh() only refreshes scalars, not eager-loaded collections.
+    row = session.scalar(
+        select(ProcessedEmail)
+        .options(
+            joinedload(ProcessedEmail.claim_data),
+            selectinload(ProcessedEmail.actions),
+        )
+        .where(ProcessedEmail.id == email_id)
+    )
+    return _to_email_log_detail(row)  # type: ignore[arg-type]  # row exists — just committed

@@ -56,7 +56,7 @@ class ProcessedEmail(Base):
     __table_args__ = (
         Index("ix_processed_emails_status", "status"),
         Index("ix_processed_emails_processed_at", "processed_at"),
-        Index("ix_processed_emails_triage_status", "triage_status"),
+        # ix_processed_emails_triage_status is created by the migration (not duplicated here)
     )
 
     def __repr__(self) -> str:

@@ -5,6 +5,7 @@ import {
   InboxCountSchema,
   InboxResponseSchema,
   type InboxResponse,
+  type TriageAction,
 } from "@/schemas/email";
 
 export function useInboxCount() {
@@ -35,7 +36,7 @@ export function useTriageAction() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationKey: ["triage"],
-    mutationFn: async ({ id, action }: { id: number; action: string }) => {
+    mutationFn: async ({ id, action }: { id: number; action: TriageAction }) => {
       const { data } = await apiClient.patch(`/email-log/${id}/triage`, { action });
       return EmailLogDetailSchema.parse(data);
     },
@@ -43,9 +44,15 @@ export function useTriageAction() {
       // Cancel in-flight refetches to avoid race conditions
       await queryClient.cancelQueries({ queryKey: ["inbox"] });
       const previousInbox = queryClient.getQueryData(["inbox"]);
-      // Optimistically remove the row so the list responds immediately
+      // Optimistically remove the row and decrement total so pagination math stays correct
       queryClient.setQueryData<InboxResponse>(["inbox"], (old) =>
-        old ? { ...old, items: old.items.filter((item) => item.id !== id) } : old
+        old
+          ? {
+              ...old,
+              items: old.items.filter((item) => item.id !== id),
+              total: Math.max(0, old.total - 1),
+            }
+          : old
       );
       return { previousInbox };
     },

@@ -66,6 +66,7 @@ export const EmailLogResponseSchema = z.object({
 });
 
 // Types
+export type TriageAction = "flag_review" | "dismiss" | "approve";
 export type EmailAction = z.infer<typeof EmailActionSchema>;
 export type InboxEntry = z.infer<typeof InboxEntrySchema>;
 export type InboxResponse = z.infer<typeof InboxResponseSchema>;
