@@ -146,76 +146,103 @@ class GraphMailSource:
         return resp
 
     def fetch_unread(self) -> tuple[list[EmailMessage], list[SkippedEmail]]:
-        """Fetch all unread messages and categorize into processable vs. skipped."""
-        url = (
+        """Fetch all unread messages via two-phase fetch with @odata.nextLink pagination.
+
+        Phase 1: GET metadata only — no $expand=attachments (avoids 100MB+ responses).
+        Phase 2: GET /messages/{id}/attachments separately, only for hasAttachments=true.
+        Pages are followed via @odata.nextLink up to MAX_PAGES safety cap.
+        All requests go through self._request() to get automatic 401 token refresh.
+        """
+        MAX_PAGES = 20  # claims mailbox should never have 1,000 unread
+
+        url: str | None = (
             f"{self.GRAPH_BASE}/users/{self._mailbox}/messages"
             f"?$filter=isRead eq false"
-            f"&$expand=attachments"
             f"&$select=id,internetMessageId,subject,from,receivedDateTime,body,hasAttachments"
-            f"&$top=10"
+            f"&$top=50"
         )
-        resp = self._request("GET", url)
-        raw = resp.json().get("value", [])
 
         messages: list[EmailMessage] = []
         skipped: list[SkippedEmail] = []
+        page_count = 0
 
-        for msg in raw:
-            subject = msg.get("subject", "(no subject)")
-            sender = msg.get("from", {}).get("emailAddress", {}).get("address", "unknown")
-            received_at = msg.get("receivedDateTime", "")
-            internet_message_id = msg.get("internetMessageId", "")
-            attachments = msg.get("attachments", [])
+        while url and page_count < MAX_PAGES:
+            page_count += 1
+            resp = self._request("GET", url)
+            body_data = resp.json()
 
-            # Extract body_text early — needed for all email types including skipped.
-            body_text = msg.get("body", {}).get("content", "")
-            if msg.get("body", {}).get("contentType") == "html":
-                body_text = BeautifulSoup(body_text, "html.parser").get_text(separator="\n")
+            for msg in body_data.get("value", []):
+                subject = msg.get("subject", "(no subject)")
+                sender = msg.get("from", {}).get("emailAddress", {}).get("address", "unknown")
+                received_at = msg.get("receivedDateTime", "")
+                internet_message_id = msg.get("internetMessageId", "")
+                has_attachments = msg.get("hasAttachments", False)
+                msg_id = msg["id"]
 
-            if not attachments:
-                skipped.append(SkippedEmail(
-                    message_id=msg["id"],
-                    internet_message_id=internet_message_id,
-                    subject=subject,
-                    sender=sender,
-                    received_at=received_at,
-                    reason="no attachments",
-                    body_text=body_text,
-                ))
-                continue
+                # Extract body_text early — needed for all email types including skipped.
+                body_text = msg.get("body", {}).get("content", "")
+                if msg.get("body", {}).get("contentType") == "html":
+                    body_text = BeautifulSoup(body_text, "html.parser").get_text(separator="\n")
 
-            pdfs: dict[str, bytes] = {}
-            for att in attachments:
-                if att.get("contentType") == "application/pdf" and att.get("contentBytes"):
-                    pdf_bytes = base64.b64decode(att["contentBytes"])
-                    pdfs[_classify_pdf(att.get("name", "attachment.pdf"))] = pdf_bytes
+                if not has_attachments:
+                    skipped.append(SkippedEmail(
+                        message_id=msg_id,
+                        internet_message_id=internet_message_id,
+                        subject=subject,
+                        sender=sender,
+                        received_at=received_at,
+                        reason="no attachments",
+                        body_text=body_text,
+                    ))
+                    continue
 
-            if not pdfs:
-                attachment_summary = ", ".join(
-                    f"{att.get('name', '?')} ({att.get('contentType', '?')})"
-                    for att in attachments
+                # Phase 2: fetch attachment bytes separately (only for hasAttachments=true)
+                att_resp = self._request(
+                    "GET",
+                    f"{self.GRAPH_BASE}/users/{self._mailbox}/messages/{msg_id}/attachments",
                 )
-                skipped.append(SkippedEmail(
-                    message_id=msg["id"],
+                attachments = att_resp.json().get("value", [])
+
+                pdfs: dict[str, bytes] = {}
+                for att in attachments:
+                    if att.get("contentType") == "application/pdf" and att.get("contentBytes"):
+                        pdf_bytes = base64.b64decode(att["contentBytes"])
+                        pdfs[_classify_pdf(att.get("name", "attachment.pdf"))] = pdf_bytes
+
+                if not pdfs:
+                    attachment_summary = ", ".join(
+                        f"{att.get('name', '?')} ({att.get('contentType', '?')})"
+                        for att in attachments
+                    )
+                    skipped.append(SkippedEmail(
+                        message_id=msg_id,
+                        internet_message_id=internet_message_id,
+                        subject=subject,
+                        sender=sender,
+                        received_at=received_at,
+                        reason=f"no PDF attachments (found: {attachment_summary})",
+                        body_text=body_text,
+                    ))
+                    continue
+
+                messages.append(EmailMessage(
+                    message_id=msg_id,
                     internet_message_id=internet_message_id,
                     subject=subject,
                     sender=sender,
                     received_at=received_at,
-                    reason=f"no PDF attachments (found: {attachment_summary})",
                     body_text=body_text,
+                    pdfs=pdfs,
                 ))
-                continue
 
-            messages.append(EmailMessage(
-                message_id=msg["id"],
-                internet_message_id=internet_message_id,
-                subject=subject,
-                sender=sender,
-                received_at=received_at,
-                body_text=body_text,
-                pdfs=pdfs,
-            ))
+            # IMPORTANT: follow nextLink via self._request() — never raw http — so
+            # 401 token refresh applies to all pages, not just page 1.
+            url = body_data.get("@odata.nextLink")
 
+        log.info(
+            "Fetched %d message(s), %d skipped across %d page(s)",
+            len(messages), len(skipped), page_count,
+        )
         return messages, skipped
 
     def _ensure_folder(self, folder_name: str) -> str:
