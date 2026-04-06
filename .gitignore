@@ -11,3 +11,5 @@ logs/*.log
 logs/*.pid
 *.egg-info/
 .claude/settings.local.json
+frontend/.vite/
+.claude/settings.json
