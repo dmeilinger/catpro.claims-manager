@@ -118,6 +118,28 @@ class TestInbox:
         resp = client.get("/api/v1/inbox")
         assert resp.json()["items"][0]["triage_status"] == "needs_review"
 
+    def test_error_detail_included_in_inbox_items(self, client, db):
+        """Inbox items must carry error_traceback and error_phase so the UI
+        can show diagnostic detail without a separate API call."""
+        uid = __import__("uuid").uuid4().hex[:8]
+        from app.models import ProcessedEmail
+        row = ProcessedEmail(
+            message_id=f"msg-{uid}", internet_message_id=f"<{uid}@test>",
+            subject="FailedClaim", sender="s@s.com",
+            received_at="2026-04-05T10:00:00", processed_at="2026-04-05T10:01:00",
+            status="error", triage_status="needs_review",
+            error_message="'FILETRAC_EMAIL'",
+            error_traceback="Traceback...\nKeyError: 'FILETRAC_EMAIL'",
+            error_phase="auth",
+        )
+        db.add(row)
+        db.flush()
+
+        resp = client.get("/api/v1/inbox")
+        item = resp.json()["items"][0]
+        assert item["error_traceback"] == "Traceback...\nKeyError: 'FILETRAC_EMAIL'"
+        assert item["error_phase"] == "auth"
+
 
 # ── GET /email-log ────────────────────────────────────────────────────────────
 
@@ -181,6 +203,28 @@ class TestEmailLog:
         _make_email(db, triage_status="actioned")
         resp = client.get("/api/v1/email-log")
         assert "triage_status" in resp.json()["items"][0]
+
+    def test_error_detail_included_in_list_items(self, client, db):
+        """error_traceback and error_phase must be returned in the list response
+        so the UI can show diagnostic info without a separate detail fetch."""
+        uid = __import__("uuid").uuid4().hex[:8]
+        from app.models import ProcessedEmail
+        row = ProcessedEmail(
+            message_id=f"msg-{uid}", internet_message_id=f"<{uid}@test>",
+            subject="Err", sender="s@s.com",
+            received_at="2026-04-05T10:00:00", processed_at="2026-04-05T10:01:00",
+            status="error", triage_status="needs_review",
+            error_message="'FILETRAC_EMAIL'",
+            error_traceback="Traceback...\nKeyError: 'FILETRAC_EMAIL'",
+            error_phase="submission",
+        )
+        db.add(row)
+        db.flush()
+
+        resp = client.get("/api/v1/email-log")
+        item = next(i for i in resp.json()["items"] if i["id"] == row.id)
+        assert item["error_traceback"] == "Traceback...\nKeyError: 'FILETRAC_EMAIL'"
+        assert item["error_phase"] == "submission"
 
     def test_body_text_included_in_list_items(self, client, db):
         """body_text must be returned in the list response (not just the detail endpoint).

@@ -18,6 +18,8 @@ export const InboxEntrySchema = z.object({
   triage_status: z.string(),
   dry_run: z.boolean().default(false),
   error_message: z.string().nullable(),
+  error_traceback: z.string().nullish(),
+  error_phase: z.string().nullish(),
   insured_name: z.string().nullable(),
 });
 
@@ -50,6 +52,8 @@ export const EmailLogEntrySchema = z.object({
   dry_run: z.boolean().default(false),
   claim_id: z.string().nullable(),
   error_message: z.string().nullable(),
+  error_traceback: z.string().nullish(),
+  error_phase: z.string().nullish(),
   insured_name: z.string().nullable(),
   body_text: z.string().nullish(),
 });

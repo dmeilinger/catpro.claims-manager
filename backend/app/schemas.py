@@ -227,6 +227,8 @@ class InboxEntry(BaseModel):
     triage_status: str
     dry_run: bool = False
     error_message: str | None = None
+    error_traceback: str | None = None
+    error_phase: str | None = None
     insured_name: str | None = None
 
 
@@ -263,6 +265,8 @@ class EmailLogEntry(BaseModel):
     dry_run: bool = False
     claim_id: str | None = None
     error_message: str | None = None
+    error_traceback: str | None = None
+    error_phase: str | None = None
     insured_name: str | None = None
     body_text: str | None = None
 

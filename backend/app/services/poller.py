@@ -10,6 +10,7 @@ import json
 import logging
 import signal
 import time
+import traceback as tb
 from datetime import datetime, timezone
 
 from app.config import get_settings
@@ -136,12 +137,20 @@ class Poller:
             except Exception:
                 pass  # Already inserted by a concurrent cycle
 
-    def _mark_error(self, row_id: int, error_message: str) -> None:
+    def _mark_error(
+        self,
+        row_id: int,
+        error_message: str,
+        error_traceback: str | None = None,
+        error_phase: str | None = None,
+    ) -> None:
         with SessionLocal() as db:
             row = db.get(ProcessedEmail, row_id)
             if row:
                 row.status = "error"
                 row.error_message = error_message
+                row.error_traceback = error_traceback
+                row.error_phase = error_phase
                 row.processed_at = _now()
                 row.triage_status = "needs_review"
                 db.commit()
@@ -255,7 +264,7 @@ class Poller:
             try:
                 claim = extract_claim_fields(msg.body_text, msg.pdfs)
             except Exception as e:
-                self._mark_error(row_id, str(e))
+                self._mark_error(row_id, str(e), tb.format_exc(), "extraction")
                 log.error("Extraction failed: %s -> %s", msg.subject, e, exc_info=True)
                 continue  # No claim_data to save; leave unread for manual review
 
@@ -281,7 +290,7 @@ class Poller:
                 )
                 log.info("Success: %s -> %s", msg.subject, result.claim_id)
             except Exception as e:
-                self._mark_error(row_id, str(e))
+                self._mark_error(row_id, str(e), tb.format_exc(), "submission")
                 # Save partial data — extraction succeeded but submission failed
                 self._insert_claim_data(email_id=row_id, claim_fields=claim.model_dump())
                 log.error("Failed: %s -> %s", msg.subject, e, exc_info=True)

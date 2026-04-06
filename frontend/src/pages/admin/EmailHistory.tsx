@@ -105,9 +105,26 @@ function EmailHistoryRow({ item }: { item: EmailLogEntry }) {
           <td colSpan={7} className="px-6 py-3">
             <div className="space-y-2 text-xs">
               {item.error_message && (
-                <p className="text-red-600 dark:text-red-400">
-                  <span className="font-medium">Error:</span> {item.error_message}
-                </p>
+                <div className="space-y-1">
+                  <p className="text-red-600 dark:text-red-400">
+                    {item.error_phase && (
+                      <span className="font-medium uppercase tracking-wide text-xs mr-2 opacity-70">
+                        [{item.error_phase}]
+                      </span>
+                    )}
+                    <span className="font-medium">Error:</span> {item.error_message}
+                  </p>
+                  {item.error_traceback && (
+                    <details>
+                      <summary className="cursor-pointer text-xs text-red-500 dark:text-red-400 hover:text-red-700 select-none">
+                        Show traceback
+                      </summary>
+                      <pre className="mt-1 whitespace-pre-wrap font-mono text-xs text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/30 rounded p-3 max-h-64 overflow-y-auto border border-red-200 dark:border-red-800">
+                        {item.error_traceback}
+                      </pre>
+                    </details>
+                  )}
+                </div>
               )}
               <p className="text-muted-foreground">
                 Received: {formatDate(item.received_at)} · Processed: {formatDate(item.processed_at)}

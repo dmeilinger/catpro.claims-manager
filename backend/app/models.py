@@ -43,6 +43,8 @@ class ProcessedEmail(Base):
     dry_run: Mapped[bool] = mapped_column(default=False)
     triage_status: Mapped[str] = mapped_column(String, default="unreviewed")
     body_text: Mapped[str | None] = mapped_column(Text)
+    error_traceback: Mapped[str | None] = mapped_column(Text)
+    error_phase: Mapped[str | None] = mapped_column(String)
     # NOTE: agent_classification, agent_confidence, agent_reasoning intentionally
     # omitted until the agent ships. They exist in the DB but not in the ORM model.
 

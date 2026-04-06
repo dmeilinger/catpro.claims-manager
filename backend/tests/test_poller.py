@@ -194,6 +194,28 @@ class TestMarkError:
         assert row.status == "error"
         assert row.error_message == "Something went wrong"
 
+    def test_stores_traceback_and_phase(self, db, poller):
+        """error_traceback and error_phase must be persisted so errors are
+        diagnosable without log access."""
+        row_id = self._insert_row(db)
+        fake_tb = "Traceback (most recent call last):\n  File 'x.py', line 1\nKeyError: 'FILETRAC_EMAIL'"
+        with _patch_session(poller):
+            poller._mark_error(row_id, "'FILETRAC_EMAIL'", fake_tb, "submission")
+        db.expire_all()
+        row = db.get(ProcessedEmail, row_id)
+        assert row.error_traceback == fake_tb
+        assert row.error_phase == "submission"
+
+    def test_traceback_and_phase_default_none(self, db, poller):
+        """Callers that don't pass traceback/phase must not break existing behaviour."""
+        row_id = self._insert_row(db)
+        with _patch_session(poller):
+            poller._mark_error(row_id, "simple error")
+        db.expire_all()
+        row = db.get(ProcessedEmail, row_id)
+        assert row.error_traceback is None
+        assert row.error_phase is None
+
 
 # ── _insert_skipped ──────────────────────────────────────────────────────────
 

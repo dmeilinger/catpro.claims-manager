@@ -477,6 +477,7 @@ def _to_inbox_entry(row: ProcessedEmail) -> InboxEntry:
         received_at=row.received_at, processed_at=row.processed_at,
         status=row.status, triage_status=row.triage_status,
         dry_run=row.dry_run, error_message=row.error_message,
+        error_traceback=row.error_traceback, error_phase=row.error_phase,
         insured_name=insured_name,
     )
 
@@ -488,7 +489,10 @@ def _to_email_log_detail(row: ProcessedEmail) -> EmailLogDetail:
         received_at=row.received_at, processed_at=row.processed_at,
         status=row.status, triage_status=row.triage_status,
         dry_run=row.dry_run, claim_id=row.claim_id,
-        error_message=row.error_message, insured_name=insured_name,
+        error_message=row.error_message,
+        error_traceback=row.error_traceback,
+        error_phase=row.error_phase,
+        insured_name=insured_name,
         actions=[EmailActionEntry.model_validate(a) for a in row.actions],
     )
 
@@ -573,7 +577,10 @@ def list_email_log(
             received_at=row.received_at, processed_at=row.processed_at,
             status=row.status, triage_status=row.triage_status,
             dry_run=row.dry_run, claim_id=row.claim_id,
-            error_message=row.error_message, insured_name=_insured_name(row.claim_data),
+            error_message=row.error_message,
+            error_traceback=row.error_traceback,
+            error_phase=row.error_phase,
+            insured_name=_insured_name(row.claim_data),
             body_text=row.body_text,
         )
         for row in rows
