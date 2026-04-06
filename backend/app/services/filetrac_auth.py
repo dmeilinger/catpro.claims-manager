@@ -2,12 +2,13 @@
 
 import base64
 import json
-import os
 import time
 
 import pyotp
 import requests
 from pycognito import Cognito
+
+from app.config import get_settings
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -26,7 +27,7 @@ TIMEOUT = (10, 30)
 
 def get_totp_code() -> str:
     """Generate TOTP, waiting if too close to window boundary (< 5s remaining)."""
-    secret = os.environ["FILETRAC_TOTP_SECRET"]
+    secret = get_settings().filetrac_totp_secret.get_secret_value()
     totp   = pyotp.TOTP(secret)
     time_remaining = 30 - (int(time.time()) % 30)
     if time_remaining < 5:
@@ -54,12 +55,13 @@ def cognito_login() -> tuple[str, str]:
       2. RespondToAuthChallenge (PASSWORD_VERIFIER) → SOFTWARE_TOKEN_MFA challenge
       3. RespondToAuthChallenge (SOFTWARE_TOKEN_MFA + TOTP code) → AuthenticationResult
     """
+    s = get_settings()
     u = Cognito(
         user_pool_id=COGNITO_USER_POOL_ID,
         client_id=COGNITO_CLIENT_ID,
-        username=os.environ["FILETRAC_EMAIL"],
+        username=s.filetrac_email,
     )
-    u.authenticate(password=os.environ["FILETRAC_PASSWORD"])
+    u.authenticate(password=s.filetrac_password.get_secret_value())
 
     # If MFA is required, pycognito raises an MFAChallengeException.
     # We catch it and respond with the TOTP code.
@@ -76,14 +78,15 @@ def cognito_login_with_mfa() -> tuple[str, str]:
     import botocore  # noqa: F401
     from pycognito.exceptions import SoftwareTokenMFAChallengeException
 
+    s = get_settings()
     u = Cognito(
         user_pool_id=COGNITO_USER_POOL_ID,
         client_id=COGNITO_CLIENT_ID,
-        username=os.environ["FILETRAC_EMAIL"],
+        username=s.filetrac_email,
     )
 
     try:
-        u.authenticate(password=os.environ["FILETRAC_PASSWORD"])
+        u.authenticate(password=s.filetrac_password.get_secret_value())
     except SoftwareTokenMFAChallengeException:
         totp_code = get_totp_code()
         u.respond_to_software_token_mfa_challenge(totp_code)
