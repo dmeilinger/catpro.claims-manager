@@ -13,3 +13,4 @@ logs/*.pid
 .claude/settings.local.json
 frontend/.vite/
 .claude/settings.json
+data/ft_session.json
