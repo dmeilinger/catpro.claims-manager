@@ -16,6 +16,7 @@ import sys
 
 from dotenv import load_dotenv
 
+from app.config import get_settings
 from app.services.eml_parser import parse_eml
 from app.services.filetrac_auth import build_session, login
 from app.services.filetrac_submit import SubmitResult, submit_claim
@@ -55,11 +56,31 @@ def main() -> None:
     print(f"      Client #: {claim.client_claim_number}")
     print(f"      Adjuster: {claim.assigned_adjuster_name}")
 
+    cfg = get_settings()
+
     print("[3/4] Authenticating to FileTrac...")
     session = build_session()
     login(session)
     print("      Authenticated.")
 
-    print("[4/4] Submitting claim...")
-    result = submit_claim(session, claim)
-    print(f"      Claim created: {result.claim_id}")
+    mode_parts = []
+    if cfg.dry_run:
+        mode_parts.append("DRY RUN")
+    if cfg.test_mode:
+        mode_parts.append("TEST MODE")
+    if cfg.filetrac_test_claim_id:
+        mode_parts.append(f"UPDATE claimID={cfg.filetrac_test_claim_id}")
+    mode_label = " | ".join(mode_parts) if mode_parts else "LIVE"
+    print(f"[4/4] Submitting claim [{mode_label}]...")
+
+    result = submit_claim(
+        session,
+        claim,
+        dry_run=cfg.dry_run,
+        test_mode=cfg.test_mode,
+        test_adjuster_id=cfg.test_adjuster_id,
+        test_branch_id=cfg.test_branch_id,
+        test_company_id=cfg.test_company_id,
+        existing_claim_id=cfg.filetrac_test_claim_id,
+    )
+    print(f"      Result: {result.claim_id}")

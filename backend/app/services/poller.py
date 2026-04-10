@@ -54,12 +54,14 @@ class Poller:
             row = db.get(AppConfig, 1)
             if row is None:
                 return {"dry_run": False, "test_mode": False,
-                        "test_adjuster_id": "342436", "test_branch_id": "2529"}
+                        "test_adjuster_id": "342436", "test_branch_id": "2529",
+                        "test_company_id": "143898"}
             return {
                 "dry_run": row.dry_run,
                 "test_mode": row.test_mode,
                 "test_adjuster_id": row.test_adjuster_id or "342436",
                 "test_branch_id": row.test_branch_id or "2529",
+                "test_company_id": "143898",
             }
 
     def _get_poll_interval(self) -> int:

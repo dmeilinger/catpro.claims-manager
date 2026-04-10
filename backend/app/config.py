@@ -34,6 +34,17 @@ class Settings(BaseSettings):
     poll_interval_seconds: int = 60
     db_path: str = "data/claims.db"
 
+    # Claim submission behaviour
+    dry_run: bool = True   # skip final POST to FileTrac (safe default)
+    test_mode: bool = True  # override adjuster/branch with test account values
+    test_adjuster_id: str = "342436"   # Bob TEST
+    test_branch_id: str = "2529"       # TEST branch
+    test_company_id: str = "143898"    # Test Company — used instead of real insurer in test mode
+    # Numeric FileTrac claim ID to UPDATE instead of creating a new claim.
+    # Set this to a permanent "sandbox" claim so tests never incur charges.
+    # Leave empty to create a new claim (only use in production).
+    filetrac_test_claim_id: str = ""
+
     # API server
     host: str = "127.0.0.1"
     port: int = 8000

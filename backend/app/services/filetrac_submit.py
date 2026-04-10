@@ -17,6 +17,8 @@ from app.services.pdf_extractor import ClaimData
 COMPANY_AUTOCOMPLETE_URL = "https://cms14.filetrac.net/system/claimEdit_clientList.asp"
 CLAIM_FORM_URL           = "https://cms14.filetrac.net/system/claimAdd.asp"
 CLAIM_SAVE_URL           = "https://cms14.filetrac.net/system/claimSave.asp?newFlag=1&anotherFlag=0"
+CLAIM_EDIT_URL           = "https://cms14.filetrac.net/system/claimEdit.asp"
+CLAIM_UPDATE_URL         = "https://cms14.filetrac.net/system/claimSave.asp?newFlag=0&anotherFlag=0"
 
 
 # ── ID resolution helpers ──────────────────────────────────────────────────────
@@ -142,11 +144,23 @@ def submit_claim(
     test_mode: bool = False,
     test_adjuster_id: str = "342436",
     test_branch_id: str = "2529",
+    existing_claim_id: str = "",
+    test_company_id: str = "143898",   # "Test Company" in FileTrac
 ) -> SubmitResult:
-    """Submit claim to FileTrac. Returns SubmitResult with claim data and resolved IDs."""
+    """Submit claim to FileTrac. Returns SubmitResult with claim data and resolved IDs.
 
-    # GET claim form — extracts CSRF token and default form values
-    resp = session.get(CLAIM_FORM_URL, timeout=TIMEOUT)
+    existing_claim_id: if set, UPDATE that claim (claimSave.asp?newFlag=0) instead of
+    creating a new one. Use a permanent "sandbox" claim ID during testing to avoid
+    incurring per-claim charges.
+    """
+    update_mode = bool(existing_claim_id)
+
+    # GET claim form — extracts CSRF token and default form values.
+    # For updates, use the edit page for the specific claim so we get the right CSRF.
+    if update_mode:
+        resp = session.get(CLAIM_EDIT_URL, params={"claimID": existing_claim_id}, timeout=TIMEOUT)
+    else:
+        resp = session.get(CLAIM_FORM_URL, timeout=TIMEOUT)
     resp.raise_for_status()
     html = resp.text
 
@@ -195,13 +209,18 @@ def submit_claim(
         "csrf_token": csrf_token,
     }
 
-    # Test mode: override IDs with configured test account values
+    # Test mode: override ALL IDs with test account values — no real company/contact/email
     if test_mode:
-        resolved_ids["adjuster_id"] = test_adjuster_id
-        resolved_ids["branch_id"] = test_branch_id
-        adjuster_id = test_adjuster_id
-        abid = test_branch_id
-        print(f"[TEST MODE] Overriding adjuster={adjuster_id}, branch={abid}")
+        adjuster_id   = test_adjuster_id
+        abid          = test_branch_id
+        company_id    = test_company_id    # Test Company — never Acuity or any real insurer
+        contact_id    = "0"               # no real contact
+        company_email = ""                # no real email — prevents acknowledgement emails
+        resolved_ids["adjuster_id"] = adjuster_id
+        resolved_ids["branch_id"]   = abid
+        resolved_ids["company_id"]  = company_id
+        resolved_ids["contact_id"]  = contact_id
+        print(f"[TEST MODE] company={company_id}, adjuster={adjuster_id}, branch={abid}, contact=0, email=off")
 
     now = _now_time()
 
@@ -229,8 +248,8 @@ def submit_claim(
         "companyUserEmail_display": "NONE",
         "ABID":                   abid,
         "asgnID":                 "0",
-        "claimFileID":            "##AUTO",
-        "prefixID":               "##AUTO",
+        "claimFileID":            existing_claim_id if update_mode else "##AUTO",
+        "prefixID":               "" if update_mode else "##AUTO",
         "claimFileID2":           "",
         "claimCompanyID2":        "0",
         "companyFileID":          claim.client_claim_number or "",
@@ -391,8 +410,8 @@ def submit_claim(
         "claimReasonCodeID": "0",
         "remLen2": "1000",
         # ── Letter / notification ──────────────────────────────────────────────
-        "chkEMailLetter":  "1",
-        "chkPDFLetter":    "1",
+        "chkEMailLetter":  "0" if test_mode else "1",
+        "chkPDFLetter":    "0" if test_mode else "1",
         "chkPrintLetter":  "0",
         "tennessee":       "0",
         "ackALERT":        "0",
@@ -407,7 +426,8 @@ def submit_claim(
 
     # Dry-run: stop before the billable POST
     if dry_run:
-        print("[DRY RUN] Skipping claim submission POST — payload ready:")
+        mode_label = f"UPDATE claimID={existing_claim_id}" if update_mode else "CREATE new claim"
+        print(f"[DRY RUN] Skipping claim submission POST ({mode_label}) — payload ready:")
         print(f"  Insured: {claim.insured_first_name} {claim.insured_last_name}")
         print(f"  Policy:  {claim.policy_number}")
         print(f"  Loss:    {claim.loss_date} — {claim.loss_type}")
@@ -421,7 +441,8 @@ def submit_claim(
             payload=payload,
         )
 
-    resp = session.post(CLAIM_SAVE_URL, data=payload, timeout=TIMEOUT, allow_redirects=True)
+    save_url = CLAIM_UPDATE_URL if update_mode else CLAIM_SAVE_URL
+    resp = session.post(save_url, data=payload, timeout=TIMEOUT, allow_redirects=True)
     resp.raise_for_status()
 
     def _result(cid: str) -> SubmitResult:
@@ -432,7 +453,15 @@ def submit_claim(
             payload=payload,
         )
 
-    # Success: response body contains <!-- claimID = [NNNNNNN] -->
+    # Update mode: no new claimID is issued — confirm with the known ID
+    if update_mode:
+        alerts = re.findall(r"alert\(['\"](.+?)['\"]\)", resp.text)
+        real_errors = [a for a in alerts if any(w in a.lower() for w in ['required', 'select a valid', 'please select', 'cannot'])]
+        if real_errors:
+            raise RuntimeError(f"Claim update failed: {'; '.join(real_errors[:3])}")
+        return _result(f"updated claimID={existing_claim_id}")
+
+    # Create mode: response body contains <!-- claimID = [NNNNNNN] -->
     m = re.search(r"<!--\s*claimID\s*=\s*\[(\d+)\]", resp.text)
     if m:
         return _result(f"claimID={m.group(1)}")
